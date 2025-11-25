@@ -38,7 +38,13 @@ export const generateVideoDetails = async (topic: string, channelName: string) =
       }
     });
 
-    return JSON.parse(response.text);
+    // Validar se o texto existe antes de parsear
+    const text = response.text;
+    if (!text) {
+      throw new Error("A IA não retornou nenhum texto.");
+    }
+
+    return JSON.parse(text);
 
   } catch (error) {
     console.error("Gemini API Error:", error);
@@ -57,9 +63,10 @@ export const analyzeSchedule = async (slots: any[]) => {
       contents: `Analyze this YouTube posting schedule for a single day. Give me 3 short, bulleted tips to improve flow or audience retention based on these topics and times. \n\n${scheduleSummary}`
     });
     
-    return response.text;
+    // Retornar string vazia ou mensagem padrão se undefined para satisfazer o TypeScript
+    return response.text || "Não foi possível gerar análise no momento.";
   } catch (error) {
     console.error("Gemini Analysis Error", error);
-    return "Could not analyze schedule at this time.";
+    return "Erro ao conectar com o serviço de análise.";
   }
 };
