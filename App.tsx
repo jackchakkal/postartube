@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { ChannelConfig, VideoSlot, VideoStatus, Language } from './types';
+import { ChannelConfig, VideoSlot, VideoStatus, Language, ChannelProfile } from './types';
 import { ConfigPanel } from './components/ConfigPanel';
 import { VideoCard } from './components/VideoCard';
 import { StatsWidget } from './components/StatsWidget';
+import { ChannelManager } from './components/ChannelManager';
 import { generateVideoDetails, analyzeSchedule } from './services/geminiService';
 import { translations } from './translations';
-import { Zap, Download, RotateCcw, Smartphone, Moon, Sun, FileText, FileSpreadsheet, Globe } from 'lucide-react';
+import { Zap, Download, RotateCcw, Smartphone, Moon, Sun, FileText, FileSpreadsheet, Users, ChevronDown } from 'lucide-react';
 
 // Helper to convert HH:mm to minutes
 const timeToMins = (time: string) => {
@@ -20,8 +21,16 @@ const minsToTime = (mins: number) => {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 };
 
+const DEFAULT_CONFIG: ChannelConfig = {
+  channelName: '',
+  videoType: 'LONG',
+  videosPerDay: 3,
+  startTime: '09:00',
+  endTime: '18:00',
+};
+
 const App: React.FC = () => {
-  // --- STATE ---
+  // --- GLOBAL UI STATE ---
   const [lang, setLang] = useState<Language>(() => {
     return (localStorage.getItem('postartube_lang') as Language) || 'pt';
   });
@@ -32,36 +41,56 @@ const App: React.FC = () => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
 
-  const [config, setConfig] = useState<ChannelConfig>(() => {
-    const saved = localStorage.getItem('postartube_config');
-    return saved ? JSON.parse(saved) : {
-      channelName: '',
-      videoType: 'LONG', // Default
-      videosPerDay: 3,
-      startTime: '09:00',
-      endTime: '18:00',
-    };
-  });
-
-  const [slots, setSlots] = useState<VideoSlot[]>(() => {
-    const saved = localStorage.getItem('postartube_slots');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [aiTip, setAiTip] = useState<string>("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [channelManagerOpen, setChannelManagerOpen] = useState(false);
+  const [aiTip, setAiTip] = useState<string>("");
 
-  // Translation Helper
-  const t = translations[lang];
+  // --- DATA STATE (MULTI-CHANNEL) ---
+  const [profiles, setProfiles] = useState<ChannelProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string>('');
 
-  // --- PERSISTENCE & SIDE EFFECTS ---
+  // Initial Load & Migration Logic
   useEffect(() => {
-    localStorage.setItem('postartube_config', JSON.stringify(config));
-  }, [config]);
+    const savedProfilesStr = localStorage.getItem('postartube_profiles');
+    const savedActiveId = localStorage.getItem('postartube_active_profile_id');
+    
+    if (savedProfilesStr) {
+      // Normal Load
+      const loadedProfiles = JSON.parse(savedProfilesStr);
+      setProfiles(loadedProfiles);
+      if (loadedProfiles.length > 0) {
+        setActiveProfileId(savedActiveId && loadedProfiles.find((p: any) => p.id === savedActiveId) ? savedActiveId : loadedProfiles[0].id);
+      }
+    } else {
+      // MIGRATION: Check for legacy single-channel data
+      const oldConfig = localStorage.getItem('postartube_config');
+      const oldSlots = localStorage.getItem('postartube_slots');
+      
+      const initialProfile: ChannelProfile = {
+        id: crypto.randomUUID(),
+        name: oldConfig ? JSON.parse(oldConfig).channelName || 'My First Channel' : 'My First Channel',
+        config: oldConfig ? JSON.parse(oldConfig) : DEFAULT_CONFIG,
+        slots: oldSlots ? JSON.parse(oldSlots) : [],
+        lastModified: Date.now()
+      };
+      
+      setProfiles([initialProfile]);
+      setActiveProfileId(initialProfile.id);
+    }
+  }, []);
+
+  // Persistence
+  useEffect(() => {
+    if (profiles.length > 0) {
+      localStorage.setItem('postartube_profiles', JSON.stringify(profiles));
+    }
+  }, [profiles]);
 
   useEffect(() => {
-    localStorage.setItem('postartube_slots', JSON.stringify(slots));
-  }, [slots]);
+    if (activeProfileId) {
+      localStorage.setItem('postartube_active_profile_id', activeProfileId);
+    }
+  }, [activeProfileId]);
 
   useEffect(() => {
     localStorage.setItem('postartube_lang', lang);
@@ -76,7 +105,63 @@ const App: React.FC = () => {
     }
   }, [darkMode]);
 
-  // --- LOGIC ---
+  // Derived State (Active Profile)
+  const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles[0];
+  const config = activeProfile?.config || DEFAULT_CONFIG;
+  const slots = activeProfile?.slots || [];
+  const t = translations[lang];
+
+  // --- PROFILE MANAGEMENT ---
+
+  const updateActiveProfile = (updates: Partial<ChannelProfile> | { config: ChannelConfig } | { slots: VideoSlot[] }) => {
+    setProfiles(prev => prev.map(p => 
+      p.id === activeProfileId ? { ...p, ...updates, lastModified: Date.now() } : p
+    ));
+  };
+
+  const createProfile = (name: string) => {
+    const newProfile: ChannelProfile = {
+      id: crypto.randomUUID(),
+      name: name,
+      config: { ...DEFAULT_CONFIG, channelName: name },
+      slots: [],
+      lastModified: Date.now()
+    };
+    setProfiles(prev => [...prev, newProfile]);
+    setActiveProfileId(newProfile.id);
+  };
+
+  const deleteProfile = (id: string) => {
+    const newProfiles = profiles.filter(p => p.id !== id);
+    setProfiles(newProfiles);
+    if (newProfiles.length > 0) {
+      setActiveProfileId(newProfiles[0].id);
+    } else {
+      // Create empty default if all deleted
+      createProfile('New Channel');
+    }
+  };
+
+  const importProfiles = (newProfiles: ChannelProfile[]) => {
+    setProfiles(newProfiles);
+    if (newProfiles.length > 0) setActiveProfileId(newProfiles[0].id);
+    setChannelManagerOpen(false);
+  };
+
+  // --- SCHEDULING LOGIC ---
+
+  const setConfig = (newConfig: ChannelConfig) => {
+    // Also update profile name if channel name changes
+    updateActiveProfile({ 
+      config: newConfig,
+      name: newConfig.channelName || activeProfile.name
+    });
+  };
+
+  const setSlots = (newSlots: VideoSlot[]) => {
+    updateActiveProfile({ slots: newSlots });
+  };
+
   const generateSchedule = () => {
     const startMins = timeToMins(config.startTime);
     const endMins = timeToMins(config.endTime);
@@ -92,14 +177,12 @@ const App: React.FC = () => {
     }
 
     const newSlots: VideoSlot[] = [];
-    // If only 1 video, put it at start time. If >1, spread evenly.
     const interval = count > 1 ? (endMins - startMins) / (count - 1) : 0;
 
     for (let i = 0; i < count; i++) {
       const timeMins = Math.round(startMins + (i * interval));
       const timeStr = minsToTime(timeMins);
       
-      // Check if a slot already exists at this time to preserve data
       const existing = slots.find(s => s.time === timeStr);
       
       if (existing) {
@@ -122,11 +205,11 @@ const App: React.FC = () => {
   };
 
   const updateSlot = (id: string, updates: Partial<VideoSlot>) => {
-    setSlots(prev => prev.map(slot => slot.id === id ? { ...slot, ...updates } : slot));
+    setSlots(slots.map(slot => slot.id === id ? { ...slot, ...updates } : slot));
   };
 
   const deleteSlot = (id: string) => {
-     setSlots(prev => prev.filter(s => s.id !== id));
+     setSlots(slots.filter(s => s.id !== id));
   };
 
   const handleAiGeneration = async (id: string, topic: string) => {
@@ -161,7 +244,6 @@ const App: React.FC = () => {
   // --- EXPORT FUNCTIONS ---
 
   const exportCSV = () => {
-    // Add BOM for Excel UTF-8 compatibility
     const BOM = "\uFEFF"; 
     const headers = ['Time', 'Type', 'Topic', 'Status', 'Title', 'Description'];
     const csvContent = "data:text/csv;charset=utf-8," + BOM
@@ -208,8 +290,25 @@ const App: React.FC = () => {
     setExportMenuOpen(false);
   };
 
+  if (!activeProfile) return <div className="min-h-screen bg-slate-50 flex items-center justify-center">Loading...</div>;
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20 transition-colors duration-200">
+      
+      {/* CHANNEL MANAGER MODAL */}
+      {channelManagerOpen && (
+        <ChannelManager 
+          profiles={profiles}
+          activeProfileId={activeProfileId}
+          onSwitch={(id) => { setActiveProfileId(id); setChannelManagerOpen(false); }}
+          onCreate={createProfile}
+          onDelete={deleteProfile}
+          onImport={importProfiles}
+          onClose={() => setChannelManagerOpen(false)}
+          t={t}
+        />
+      )}
+
       {/* Header */}
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -218,6 +317,18 @@ const App: React.FC = () => {
               <Zap className="text-white" size={20} fill="currentColor" />
             </div>
             <h1 className="text-xl font-bold text-slate-800 dark:text-white tracking-tight">{t.appTitle}</h1>
+            
+            {/* Channel Selector Pill */}
+            <div className="ml-4 flex items-center gap-2">
+              <button 
+                onClick={() => setChannelManagerOpen(true)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-full text-xs font-bold text-slate-700 dark:text-slate-300 transition-colors border border-slate-200 dark:border-slate-700"
+              >
+                <Users size={14} className="text-indigo-500" />
+                <span className="max-w-[100px] md:max-w-[150px] truncate">{activeProfile.name}</span>
+                <ChevronDown size={12} />
+              </button>
+            </div>
           </div>
           
           <div className="flex items-center gap-3">

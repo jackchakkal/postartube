@@ -31,6 +31,14 @@ export interface ChannelConfig {
   endTime: string; // HH:mm
 }
 
+export interface ChannelProfile {
+  id: string;
+  name: string;
+  config: ChannelConfig;
+  slots: VideoSlot[];
+  lastModified: number;
+}
+
 // Keeping color definitions, can be used dynamically
 export const STATUS_COLORS: Record<VideoStatus, string> = {
   [VideoStatus.PLANNING]: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',

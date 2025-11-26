@@ -43,6 +43,21 @@ type Translations = {
     topicPlaceholder: string;
     shortsTopicPlaceholder: string;
     status: Record<VideoStatus, string>;
+    // New Channel Manager Translations
+    channelsBtn: string;
+    channelsTitle: string;
+    createNewChannel: string;
+    switchChannel: string;
+    deleteChannel: string;
+    confirmDeleteChannel: string;
+    importExportTitle: string;
+    importExportDesc: string;
+    copyCode: string;
+    pasteCode: string;
+    loadCodeBtn: string;
+    codeCopied: string;
+    invalidCode: string;
+    noChannels: string;
   };
 };
 
@@ -96,7 +111,21 @@ export const translations: Translations = {
       [VideoStatus.REVIEW]: "Review",
       [VideoStatus.READY]: "Ready",
       [VideoStatus.PUBLISHED]: "Published",
-    }
+    },
+    channelsBtn: "Channels",
+    channelsTitle: "My Channels",
+    createNewChannel: "Create New Channel",
+    switchChannel: "Switch",
+    deleteChannel: "Delete",
+    confirmDeleteChannel: "Are you sure you want to delete this channel and all its data?",
+    importExportTitle: "Cloud Sync / Backup",
+    importExportDesc: "To access your channels on another device, copy this code and paste it there.",
+    copyCode: "Copy Access Code",
+    pasteCode: "Paste Access Code here...",
+    loadCodeBtn: "Load Data (Login)",
+    codeCopied: "Code copied to clipboard!",
+    invalidCode: "Invalid code. Please check and try again.",
+    noChannels: "No channels found. Create one!"
   },
   pt: {
     appTitle: "PostarTube",
@@ -147,7 +176,21 @@ export const translations: Translations = {
       [VideoStatus.REVIEW]: "Revisão",
       [VideoStatus.READY]: "Pronto",
       [VideoStatus.PUBLISHED]: "Publicado",
-    }
+    },
+    channelsBtn: "Canais",
+    channelsTitle: "Meus Canais",
+    createNewChannel: "Criar Novo Canal",
+    switchChannel: "Trocar",
+    deleteChannel: "Excluir",
+    confirmDeleteChannel: "Tem certeza que deseja excluir este canal e todos os dados dele?",
+    importExportTitle: "Sincronização / Backup",
+    importExportDesc: "Para acessar seus canais em outro dispositivo, copie este código e cole lá.",
+    copyCode: "Copiar Código de Acesso",
+    pasteCode: "Cole o Código de Acesso aqui...",
+    loadCodeBtn: "Carregar Dados (Login)",
+    codeCopied: "Código copiado!",
+    invalidCode: "Código inválido. Verifique e tente novamente.",
+    noChannels: "Nenhum canal encontrado. Crie um!"
   },
   es: {
     appTitle: "PostarTube",
@@ -198,6 +241,20 @@ export const translations: Translations = {
       [VideoStatus.REVIEW]: "Revisión",
       [VideoStatus.READY]: "Listo",
       [VideoStatus.PUBLISHED]: "Publicado",
-    }
+    },
+    channelsBtn: "Canales",
+    channelsTitle: "Mis Canales",
+    createNewChannel: "Crear Nuevo Canal",
+    switchChannel: "Cambiar",
+    deleteChannel: "Eliminar",
+    confirmDeleteChannel: "¿Estás seguro de que quieres eliminar este canal y todos sus datos?",
+    importExportTitle: "Sincronización / Backup",
+    importExportDesc: "Para acceder a tus canales en otro dispositivo, copia este código y pégalo allí.",
+    copyCode: "Copiar Código de Acceso",
+    pasteCode: "Pega el Código de Acceso aquí...",
+    loadCodeBtn: "Cargar Datos (Login)",
+    codeCopied: "¡Código copiado!",
+    invalidCode: "Código inválido. Por favor verifica e intenta de nuevo.",
+    noChannels: "No se encontraron canales. ¡Crea uno!"
   }
 };
