@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
-import { Mail, Lock, LogIn, UserPlus, AlertTriangle } from 'lucide-react';
+import { Mail, Lock, LogIn, UserPlus, AlertTriangle, WifiOff } from 'lucide-react';
 
 export const Auth: React.FC<{ t: any }> = ({ t }) => {
   const [loading, setLoading] = useState(false);
@@ -11,23 +11,8 @@ export const Auth: React.FC<{ t: any }> = ({ t }) => {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
 
-  if (!isSupabaseConfigured()) {
-    return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
-            <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-yellow-200">
-                <AlertTriangle size={48} className="text-yellow-500 mx-auto mb-4" />
-                <h2 className="text-xl font-bold mb-2 text-slate-800 dark:text-white">Supabase Missing</h2>
-                <p className="text-slate-500 dark:text-slate-400 mb-4 text-sm">
-                    Please create a <code>.env</code> file or configure Vercel Environment Variables:
-                </p>
-                <div className="bg-slate-100 dark:bg-slate-900 p-3 rounded text-left text-xs font-mono text-slate-600 dark:text-slate-300 mb-4 overflow-x-auto">
-                    VITE_SUPABASE_URL=...<br/>
-                    VITE_SUPABASE_ANON_KEY=...
-                </div>
-            </div>
-        </div>
-    )
-  }
+  // No modo Mock, isSupabaseConfigured retorna true, mas podemos verificar o env
+  const isDemo = !(import.meta as any).env?.VITE_SUPABASE_URL;
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,7 +24,6 @@ export const Auth: React.FC<{ t: any }> = ({ t }) => {
       if (mode === 'SIGNUP') {
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) {
-            // Se o usuário já existe no banco compartilhado, sugerimos o login
             if (error.message.includes("already registered")) {
                 setError("Este email já possui conta. Tente fazer Login.");
                 setMode('LOGIN');
@@ -62,7 +46,15 @@ export const Auth: React.FC<{ t: any }> = ({ t }) => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
-      <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-200 dark:border-slate-700">
+      <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-200 dark:border-slate-700 relative overflow-hidden">
+        
+        {isDemo && (
+            <div className="bg-orange-100 text-orange-800 text-xs font-bold p-2 text-center mb-6 rounded-lg border border-orange-200 flex items-center justify-center gap-2">
+                <WifiOff size={14} /> 
+                MODO OFFLINE / DEMO ATIVO
+            </div>
+        )}
+
         <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">PostarTube</h1>
             <p className="text-slate-500 dark:text-slate-400">
@@ -121,6 +113,12 @@ export const Auth: React.FC<{ t: any }> = ({ t }) => {
                 {mode === 'LOGIN' ? "Não tem conta? Cadastrar" : "Já tem conta? Entrar"}
             </button>
         </div>
+        
+        {isDemo && (
+            <p className="mt-4 text-xs text-center text-slate-400">
+                Pode usar qualquer email/senha neste modo.
+            </p>
+        )}
       </div>
     </div>
   );

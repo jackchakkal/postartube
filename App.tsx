@@ -244,16 +244,24 @@ const App: React.FC = () => {
   const generateSchedule = async () => {
     if (!activeProfileId) return;
     
+    // Clear immediately in UI to show action is happening and prevent appending duplicates if reload is slow
+    setSlots([]);
+    setLoadingData(true);
+
     const startMins = timeToMins(config.startTime);
     const endMins = timeToMins(config.endTime);
     const count = config.videosPerDay;
 
     if (endMins <= startMins) {
       alert(t.endTimeError);
+      setLoadingData(false);
       return;
     }
 
-    if (count > 200 && !window.confirm(t.confirmHighVolume)) return;
+    if (count > 200 && !window.confirm(t.confirmHighVolume)) {
+      setLoadingData(false);
+      return;
+    }
 
     // RANDOM ALGORITHM
     const randomTimes: number[] = [];
@@ -265,7 +273,7 @@ const App: React.FC = () => {
 
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
 
-    // 1. CLEAR EXISTING SLOTS FOR THIS PROFILE AND DATE
+    // 1. CLEAR EXISTING SLOTS FOR THIS PROFILE AND DATE (WAIT FOR IT)
     await supabase.from('p12_slots')
         .delete()
         .eq('profile_id', activeProfileId)
@@ -288,7 +296,7 @@ const App: React.FC = () => {
         console.error(error);
         alert('Error saving schedule');
     } else {
-        loadSlots();
+        await loadSlots();
     }
   };
 
