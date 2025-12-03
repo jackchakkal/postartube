@@ -1,168 +1,202 @@
 import React, { useState, useEffect } from 'react';
-import { ChannelConfig, VideoSlot, VideoStatus, Language, ChannelProfile } from './types';
+import { ChannelConfig, VideoSlot, VideoStatus, Language, ChannelProfile, DbProfile, DbSlot, Platform, PLATFORM_CONFIG } from './types';
 import { ConfigPanel } from './components/ConfigPanel';
 import { VideoCard } from './components/VideoCard';
 import { StatsWidget } from './components/StatsWidget';
 import { ChannelManager } from './components/ChannelManager';
 import { generateVideoDetails, analyzeSchedule } from './services/geminiService';
 import { translations } from './translations';
-import { Zap, Download, RotateCcw, Smartphone, Moon, Sun, FileText, FileSpreadsheet, Users, ChevronDown } from 'lucide-react';
+import { Auth } from './components/Auth';
+import { CalendarSelector } from './components/CalendarSelector';
+import { supabase, isSupabaseConfigured } from './services/supabase';
+import { format } from 'date-fns';
+import { Zap, Download, RotateCcw, Smartphone, Moon, Sun, FileText, FileSpreadsheet, Users, ChevronDown, CheckCircle2 } from 'lucide-react';
 
-// Helper to convert HH:mm to minutes
+// --- HELPERS ---
 const timeToMins = (time: string) => {
   const [h, m] = time.split(':').map(Number);
   return h * 60 + m;
 };
 
-// Helper to convert minutes to HH:mm
 const minsToTime = (mins: number) => {
   const h = Math.floor(mins / 60);
   const m = Math.floor(mins % 60);
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 };
 
-const DEFAULT_CONFIG: ChannelConfig = {
-  channelName: '',
-  videoType: 'LONG',
-  videosPerDay: 3,
-  startTime: '09:00',
-  endTime: '18:00',
-};
+// --- APP ---
 
 const App: React.FC = () => {
-  // --- GLOBAL UI STATE ---
-  const [lang, setLang] = useState<Language>(() => {
-    return (localStorage.getItem('postartube_lang') as Language) || 'pt';
-  });
+  // --- SESSION STATE ---
+  const [session, setSession] = useState<any>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
 
+  // --- UI STATE ---
+  const [lang, setLang] = useState<Language>(() => (localStorage.getItem('postartube_lang') as Language) || 'pt');
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const saved = localStorage.getItem('postartube_theme');
     if (saved) return saved === 'dark';
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
-
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [channelManagerOpen, setChannelManagerOpen] = useState(false);
   const [aiTip, setAiTip] = useState<string>("");
 
-  // --- DATA STATE (MULTI-CHANNEL) ---
+  // --- DATA STATE ---
   const [profiles, setProfiles] = useState<ChannelProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string>('');
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [slots, setSlots] = useState<VideoSlot[]>([]);
+  const [loadingData, setLoadingData] = useState(false);
 
-  // Initial Load & Migration Logic
+  // 1. Auth Init
   useEffect(() => {
-    const savedProfilesStr = localStorage.getItem('postartube_profiles');
-    const savedActiveId = localStorage.getItem('postartube_active_profile_id');
-    
-    if (savedProfilesStr) {
-      // Normal Load
-      const loadedProfiles = JSON.parse(savedProfilesStr);
-      setProfiles(loadedProfiles);
-      if (loadedProfiles.length > 0) {
-        setActiveProfileId(savedActiveId && loadedProfiles.find((p: any) => p.id === savedActiveId) ? savedActiveId : loadedProfiles[0].id);
-      }
-    } else {
-      // MIGRATION: Check for legacy single-channel data
-      const oldConfig = localStorage.getItem('postartube_config');
-      const oldSlots = localStorage.getItem('postartube_slots');
-      
-      const initialProfile: ChannelProfile = {
-        id: crypto.randomUUID(),
-        name: oldConfig ? JSON.parse(oldConfig).channelName || 'My First Channel' : 'My First Channel',
-        config: oldConfig ? JSON.parse(oldConfig) : DEFAULT_CONFIG,
-        slots: oldSlots ? JSON.parse(oldSlots) : [],
-        lastModified: Date.now()
-      };
-      
-      setProfiles([initialProfile]);
-      setActiveProfileId(initialProfile.id);
+    if (!isSupabaseConfigured()) {
+        setSessionLoading(false);
+        return;
     }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setSessionLoading(false);
+    }).catch(() => {
+      setSessionLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Persistence
+  // 2. Load Profiles
   useEffect(() => {
-    if (profiles.length > 0) {
-      localStorage.setItem('postartube_profiles', JSON.stringify(profiles));
+    if (session) {
+       loadProfiles();
     }
-  }, [profiles]);
+  }, [session]);
 
+  const loadProfiles = async () => {
+      const { data, error } = await supabase.from('p12_profiles').select('*');
+      if (error) console.error(error);
+      if (data) {
+          const mapped: ChannelProfile[] = data.map((p: DbProfile) => ({
+              id: p.id,
+              name: p.name,
+              platform: p.platform,
+              config: {
+                  videosPerDay: p.default_videos_per_day,
+                  startTime: p.default_start_time,
+                  endTime: p.default_end_time,
+                  videoType: 'LONG' // Default for UI, DB doesn't store this preference per se yet
+              }
+          }));
+          setProfiles(mapped);
+          if (mapped.length > 0 && !activeProfileId) {
+              setActiveProfileId(mapped[0].id);
+          }
+      }
+  };
+
+  // 3. Load Slots (When Profile or Date Changes)
   useEffect(() => {
-    if (activeProfileId) {
-      localStorage.setItem('postartube_active_profile_id', activeProfileId);
-    }
-  }, [activeProfileId]);
+     if (activeProfileId && selectedDate) {
+         loadSlots();
+     }
+  }, [activeProfileId, selectedDate]);
 
+  const loadSlots = async () => {
+      setLoadingData(true);
+      const dateStr = format(selectedDate, 'yyyy-MM-dd');
+      
+      const { data, error } = await supabase
+          .from('p12_slots')
+          .select('*')
+          .eq('profile_id', activeProfileId)
+          .eq('date', dateStr)
+          .order('time', { ascending: true });
+
+      if (error) console.error(error);
+      
+      if (data) {
+          const mapped: VideoSlot[] = data.map((s: DbSlot) => ({
+              id: s.id,
+              time: s.time,
+              type: s.type as any,
+              topic: s.topic || '',
+              title: s.title || '',
+              description: s.description || '',
+              status: s.status as VideoStatus,
+              aiLoading: false,
+              date: s.date
+          }));
+          setSlots(mapped);
+      }
+      setLoadingData(false);
+  };
+
+  // --- THEME & LANG ---
   useEffect(() => {
     localStorage.setItem('postartube_lang', lang);
   }, [lang]);
 
   useEffect(() => {
     localStorage.setItem('postartube_theme', darkMode ? 'dark' : 'light');
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    if (darkMode) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
   }, [darkMode]);
 
-  // Derived State (Active Profile)
-  const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles[0];
-  const config = activeProfile?.config || DEFAULT_CONFIG;
-  const slots = activeProfile?.slots || [];
+  // Derived State
   const t = translations[lang];
+  const activeProfile = profiles.find(p => p.id === activeProfileId);
+  // We use a local config state to drive the inputs, syncing with DB on save
+  const config = activeProfile?.config || { videosPerDay: 3, startTime: '09:00', endTime: '18:00', videoType: 'LONG' };
 
-  // --- PROFILE MANAGEMENT ---
+  // --- ACTIONS ---
 
-  const updateActiveProfile = (updates: Partial<ChannelProfile> | { config: ChannelConfig } | { slots: VideoSlot[] }) => {
-    setProfiles(prev => prev.map(p => 
-      p.id === activeProfileId ? { ...p, ...updates, lastModified: Date.now() } : p
-    ));
+  const handleConfigChange = async (newConfig: ChannelConfig) => {
+      // Optimistic Update
+      setProfiles(prev => prev.map(p => 
+          p.id === activeProfileId ? { ...p, config: newConfig } : p
+      ));
+
+      // Save to DB (Debounce ideal, but simple save for now)
+      await supabase.from('p12_profiles').update({
+          default_videos_per_day: newConfig.videosPerDay,
+          default_start_time: newConfig.startTime,
+          default_end_time: newConfig.endTime
+      }).eq('id', activeProfileId);
   };
 
-  const createProfile = (name: string) => {
-    const newProfile: ChannelProfile = {
-      id: crypto.randomUUID(),
-      name: name,
-      config: { ...DEFAULT_CONFIG, channelName: name },
-      slots: [],
-      lastModified: Date.now()
-    };
-    setProfiles(prev => [...prev, newProfile]);
-    setActiveProfileId(newProfile.id);
+  const handleCreateProfile = async (name: string, platform: Platform) => {
+      const { data, error } = await supabase.from('p12_profiles').insert({
+          user_id: session.user.id,
+          name: name,
+          platform: platform,
+          default_videos_per_day: 3,
+          default_start_time: '09:00',
+          default_end_time: '18:00'
+      }).select().single();
+
+      if (data) {
+          await loadProfiles();
+          setActiveProfileId(data.id);
+          setChannelManagerOpen(false);
+      }
   };
 
-  const deleteProfile = (id: string) => {
-    const newProfiles = profiles.filter(p => p.id !== id);
-    setProfiles(newProfiles);
-    if (newProfiles.length > 0) {
-      setActiveProfileId(newProfiles[0].id);
-    } else {
-      // Create empty default if all deleted
-      createProfile('New Channel');
-    }
+  const handleDeleteProfile = async (id: string) => {
+      await supabase.from('p12_profiles').delete().eq('id', id);
+      const remaining = profiles.filter(p => p.id !== id);
+      setProfiles(remaining);
+      if (remaining.length > 0) setActiveProfileId(remaining[0].id);
+      else setActiveProfileId('');
   };
 
-  const importProfiles = (newProfiles: ChannelProfile[]) => {
-    setProfiles(newProfiles);
-    if (newProfiles.length > 0) setActiveProfileId(newProfiles[0].id);
-    setChannelManagerOpen(false);
-  };
+  // --- SCHEDULE GENERATOR (RANDOMIZED) ---
 
-  // --- SCHEDULING LOGIC ---
-
-  const setConfig = (newConfig: ChannelConfig) => {
-    // Also update profile name if channel name changes
-    updateActiveProfile({ 
-      config: newConfig,
-      name: newConfig.channelName || activeProfile.name
-    });
-  };
-
-  const setSlots = (newSlots: VideoSlot[]) => {
-    updateActiveProfile({ slots: newSlots });
-  };
-
-  const generateSchedule = () => {
+  const generateSchedule = async () => {
     const startMins = timeToMins(config.startTime);
     const endMins = timeToMins(config.endTime);
     const count = config.videosPerDay;
@@ -172,84 +206,101 @@ const App: React.FC = () => {
       return;
     }
 
-    if (count > 200) {
-      if (!window.confirm(t.confirmHighVolume)) return;
-    }
+    if (count > 200 && !window.confirm(t.confirmHighVolume)) return;
 
-    const newSlots: VideoSlot[] = [];
-    const interval = count > 1 ? (endMins - startMins) / (count - 1) : 0;
-
+    // RANDOM ALGORITHM
+    const randomTimes: number[] = [];
     for (let i = 0; i < count; i++) {
-      const timeMins = Math.round(startMins + (i * interval));
-      const timeStr = minsToTime(timeMins);
-      
-      const existing = slots.find(s => s.time === timeStr);
-      
-      if (existing) {
-        newSlots.push(existing);
-      } else {
-        newSlots.push({
-          id: crypto.randomUUID(),
-          time: timeStr,
-          type: config.videoType,
-          topic: '',
-          title: '',
-          description: '',
-          status: VideoStatus.PLANNING,
-          aiLoading: false,
-        });
-      }
+        // Generate random minute between start and end
+        const rand = Math.floor(Math.random() * (endMins - startMins + 1)) + startMins;
+        randomTimes.push(rand);
     }
-    setSlots(newSlots);
-    setAiTip(""); 
+    // Sort chronologically
+    randomTimes.sort((a, b) => a - b);
+
+    // Create DbSlots
+    const dateStr = format(selectedDate, 'yyyy-MM-dd');
+    const newDbSlots = randomTimes.map(timeMins => ({
+        profile_id: activeProfileId,
+        date: dateStr,
+        time: minsToTime(timeMins),
+        type: config.videoType,
+        status: VideoStatus.PLANNING,
+        topic: '',
+        title: '',
+        description: ''
+    }));
+
+    // Batch Insert
+    const { error } = await supabase.from('p12_slots').insert(newDbSlots);
+    if (error) {
+        console.error(error);
+        alert('Error saving schedule');
+    } else {
+        loadSlots();
+    }
   };
 
-  const updateSlot = (id: string, updates: Partial<VideoSlot>) => {
-    setSlots(slots.map(slot => slot.id === id ? { ...slot, ...updates } : slot));
+  const updateSlot = async (id: string, updates: Partial<VideoSlot>) => {
+    // Optimistic UI
+    setSlots(slots.map(s => s.id === id ? { ...s, ...updates } : s));
+
+    // DB Update
+    // Map UI keys to DB keys if necessary (here mostly same, except camelCase vs snake)
+    const dbUpdates: any = {};
+    if (updates.status) dbUpdates.status = updates.status;
+    if (updates.topic !== undefined) dbUpdates.topic = updates.topic;
+    if (updates.title !== undefined) dbUpdates.title = updates.title;
+    if (updates.description !== undefined) dbUpdates.description = updates.description;
+
+    await supabase.from('p12_slots').update(dbUpdates).eq('id', id);
   };
 
-  const deleteSlot = (id: string) => {
-     setSlots(slots.filter(s => s.id !== id));
+  const deleteSlot = async (id: string) => {
+      setSlots(slots.filter(s => s.id !== id));
+      await supabase.from('p12_slots').delete().eq('id', id);
   };
 
+  const clearSchedule = async () => {
+      if(window.confirm(t.confirmClear)) {
+          const dateStr = format(selectedDate, 'yyyy-MM-dd');
+          await supabase.from('p12_slots').delete().eq('profile_id', activeProfileId).eq('date', dateStr);
+          setSlots([]);
+      }
+  };
+
+  // --- AI ---
   const handleAiGeneration = async (id: string, topic: string) => {
     if (!topic) return;
     updateSlot(id, { aiLoading: true });
     try {
-      const data = await generateVideoDetails(topic, config.channelName);
+      const data = await generateVideoDetails(topic, activeProfile?.name || '');
       updateSlot(id, {
         title: data.title,
         description: data.description,
         aiLoading: false
       });
     } catch (error) {
-      alert("AI Generation failed. Check API Key or try again.");
+      alert("AI Error");
       updateSlot(id, { aiLoading: false });
     }
   };
 
   const handleGlobalAnalysis = async () => {
-    if (slots.length === 0) return;
-    const tip = await analyzeSchedule(slots);
-    setAiTip(tip);
+      const tip = await analyzeSchedule(slots);
+      setAiTip(tip);
   };
 
-  const clearSchedule = () => {
-    if(window.confirm(t.confirmClear)) {
-      setSlots([]);
-      setAiTip("");
-    }
-  };
-
-  // --- EXPORT FUNCTIONS ---
-
+  // --- EXPORTS ---
   const exportCSV = () => {
+    // ... same as before but using slot state ...
     const BOM = "\uFEFF"; 
-    const headers = ['Time', 'Type', 'Topic', 'Status', 'Title', 'Description'];
+    const headers = ['Date', 'Time', 'Type', 'Topic', 'Status', 'Title', 'Description'];
     const csvContent = "data:text/csv;charset=utf-8," + BOM
       + [headers.join(','), ...slots.map(s => {
           const statusTranslated = t.status[s.status];
           return [
+            s.date,
             s.time,
             s.type,
             `"${s.topic.replace(/"/g, '""')}"`, 
@@ -262,48 +313,46 @@ const App: React.FC = () => {
       const encodedUri = encodeURI(csvContent);
       const link = document.createElement("a");
       link.setAttribute("href", encodedUri);
-      link.setAttribute("download", `PostarTube_${config.channelName || 'schedule'}_${new Date().toISOString().split('T')[0]}.csv`);
+      
+      const dateStr = format(selectedDate, 'yyyy-MM-dd');
+      link.setAttribute("download", `PostarTube_${activeProfile?.name}_${dateStr}.csv`);
       document.body.appendChild(link);
       link.click();
       setExportMenuOpen(false);
   };
 
   const exportTXT = () => {
-    let content = `PostarTube Schedule - ${config.channelName}\n`;
-    content += `Date: ${new Date().toLocaleDateString()}\n`;
-    content += "========================================\n\n";
-
-    slots.forEach(s => {
-      content += `[${s.time}] ${s.topic || "(No Topic)"}\n`;
-      content += `Status: ${t.status[s.status]}\n`;
-      if (s.title) content += `Title: ${s.title}\n`;
-      if (s.description) content += `Desc: ${s.description}\n`;
-      content += "----------------------------------------\n";
-    });
-
-    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `PostarTube_${config.channelName || 'schedule'}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    setExportMenuOpen(false);
+     // ... simple text export ...
+     let content = `PostarTube - ${activeProfile?.name}\n`;
+     content += `Date: ${format(selectedDate, 'yyyy-MM-dd')}\n`;
+     slots.forEach(s => {
+         content += `[${s.time}] ${s.topic || 'Untitled'} (${s.status})\n`;
+     });
+     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+     const link = document.createElement("a");
+     link.href = URL.createObjectURL(blob);
+     link.download = `PostarTube.txt`;
+     document.body.appendChild(link);
+     link.click();
+     setExportMenuOpen(false);
   };
 
-  if (!activeProfile) return <div className="min-h-screen bg-slate-50 flex items-center justify-center">Loading...</div>;
+
+  // --- RENDER ---
+
+  if (sessionLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-500">Loading...</div>;
+  if (!session) return <Auth t={t} />;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20 transition-colors duration-200">
       
-      {/* CHANNEL MANAGER MODAL */}
       {channelManagerOpen && (
         <ChannelManager 
           profiles={profiles}
           activeProfileId={activeProfileId}
           onSwitch={(id) => { setActiveProfileId(id); setChannelManagerOpen(false); }}
-          onCreate={createProfile}
-          onDelete={deleteProfile}
-          onImport={importProfiles}
+          onCreate={handleCreateProfile}
+          onDelete={handleDeleteProfile}
           onClose={() => setChannelManagerOpen(false)}
           t={t}
         />
@@ -318,28 +367,28 @@ const App: React.FC = () => {
             </div>
             <h1 className="text-xl font-bold text-slate-800 dark:text-white tracking-tight">{t.appTitle}</h1>
             
-            {/* Channel Selector Pill */}
-            <div className="ml-4 flex items-center gap-2">
-              <button 
-                onClick={() => setChannelManagerOpen(true)}
-                className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-full text-xs font-bold text-slate-700 dark:text-slate-300 transition-colors border border-slate-200 dark:border-slate-700"
-              >
-                <Users size={14} className="text-indigo-500" />
-                <span className="max-w-[100px] md:max-w-[150px] truncate">{activeProfile.name}</span>
-                <ChevronDown size={12} />
-              </button>
-            </div>
+            {/* Profile Pill */}
+            {activeProfile && (
+                <div className="ml-4 flex items-center gap-2">
+                <button 
+                    onClick={() => setChannelManagerOpen(true)}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-full text-xs font-bold text-slate-700 dark:text-slate-300 transition-colors border border-slate-200 dark:border-slate-700"
+                >
+                    <Users size={14} className="text-indigo-500" />
+                    <span className="max-w-[100px] md:max-w-[150px] truncate">{activeProfile.name}</span>
+                    <ChevronDown size={12} />
+                </button>
+                </div>
+            )}
           </div>
           
           <div className="flex items-center gap-3">
-            {/* Language Switcher */}
             <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
-               <button onClick={() => setLang('pt')} className={`px-2 py-1 text-xs font-bold rounded ${lang === 'pt' ? 'bg-white dark:bg-slate-600 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400'}`}>PT</button>
-               <button onClick={() => setLang('es')} className={`px-2 py-1 text-xs font-bold rounded ${lang === 'es' ? 'bg-white dark:bg-slate-600 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400'}`}>ES</button>
-               <button onClick={() => setLang('en')} className={`px-2 py-1 text-xs font-bold rounded ${lang === 'en' ? 'bg-white dark:bg-slate-600 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400'}`}>EN</button>
+               {(['pt', 'es', 'en'] as Language[]).map(l => (
+                   <button key={l} onClick={() => setLang(l)} className={`px-2 py-1 text-xs font-bold rounded uppercase ${lang === l ? 'bg-white dark:bg-slate-600 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400'}`}>{l}</button>
+               ))}
             </div>
 
-            {/* Dark Mode Toggle */}
             <button 
               onClick={() => setDarkMode(!darkMode)}
               className="p-2 text-slate-500 dark:text-indigo-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
@@ -347,15 +396,11 @@ const App: React.FC = () => {
               {darkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
 
-            <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 mx-1"></div>
-
-            {/* Export Menu */}
             <div className="relative">
               <button 
                 onClick={() => setExportMenuOpen(!exportMenuOpen)} 
                 disabled={slots.length === 0} 
                 className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-slate-400 dark:hover:text-indigo-300 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"
-                title="Export"
               >
                 <Download size={20} />
               </button>
@@ -372,7 +417,6 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {/* Clear Button */}
             <button onClick={clearSchedule} disabled={slots.length === 0} className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 dark:text-slate-400 dark:hover:text-red-400 dark:hover:bg-red-900/20 rounded-lg transition-colors" title={t.clearAll}>
               <RotateCcw size={20} />
             </button>
@@ -381,89 +425,82 @@ const App: React.FC = () => {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex flex-col lg:flex-row gap-8">
-          
-          {/* Left Sidebar: Configuration */}
-          <aside className="lg:w-80 shrink-0">
-            <ConfigPanel config={config} setConfig={setConfig} onGenerate={generateSchedule} t={t} />
-            
-            {/* AI Analysis Box */}
-            {slots.length > 0 && config.videoType === 'LONG' && (
-              <div className="mt-6 bg-indigo-900 dark:bg-indigo-950 rounded-2xl p-6 text-indigo-100 shadow-lg relative overflow-hidden border border-indigo-800/50">
-                <div className="absolute top-0 right-0 p-4 opacity-10">
-                   <Zap size={64} />
-                </div>
-                <h3 className="font-bold text-white mb-2 flex items-center gap-2">
-                   <Zap size={16} className="text-yellow-400" fill="currentColor"/> {t.aiCoachTitle}
-                </h3>
-                <p className="text-sm text-indigo-200 mb-4 leading-relaxed">
-                  {aiTip || t.aiCoachDesc}
-                </p>
-                <button 
-                  onClick={handleGlobalAnalysis}
-                  className="w-full bg-white/10 hover:bg-white/20 text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors border border-white/20"
-                >
-                  {aiTip ? t.aiCoachBtnActive : t.aiCoachBtn}
-                </button>
-              </div>
-            )}
-            
-            {/* Hints for Shorts Mode */}
-            {config.videoType === 'SHORT' && (
-              <div className="mt-6 p-4 bg-pink-50 dark:bg-pink-900/20 border border-pink-100 dark:border-pink-900/30 rounded-xl text-pink-800 dark:text-pink-300 text-sm">
-                <div className="font-bold flex items-center gap-2 mb-2">
-                  <Smartphone size={16} /> {t.shortsModeTitle}
-                </div>
-                <p className="opacity-80">
-                  {t.shortsModeDesc}
-                </p>
-              </div>
-            )}
-          </aside>
+        {!activeProfile ? (
+             <div className="text-center py-20">
+                 <h2 className="text-xl font-bold text-slate-400">{t.noChannels}</h2>
+                 <button onClick={() => setChannelManagerOpen(true)} className="mt-4 bg-indigo-600 text-white px-6 py-2 rounded-lg">{t.createNewChannel}</button>
+             </div>
+        ) : (
+            <>
+                <CalendarSelector selectedDate={selectedDate} onSelect={setSelectedDate} lang={lang} />
 
-          {/* Main Content: Schedule List */}
-          <div className="flex-1">
-            <StatsWidget slots={slots} t={t} />
-
-            {slots.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-600">
-                <Zap size={48} className="mb-4 opacity-20" />
-                <p className="font-medium">{t.noScheduleTitle}</p>
-                <p className="text-sm">{t.noScheduleDesc}</p>
-              </div>
-            ) : (
-              <div className={config.videoType === 'SHORT' ? "grid gap-2" : "space-y-4"}>
-                 {/* Header for Checklist if Shorts */}
-                 {slots.some(s => s.type === 'SHORT') && (
-                    <div className="flex px-3 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
-                      <div className="w-12">{t.headerTime}</div>
-                      <div className="w-5 mx-3">{t.headerDone}</div>
-                      <div className="flex-1">{t.headerTopic}</div>
-                      <div className="w-24 text-right">{t.headerStatus}</div>
-                    </div>
-                 )}
+                <div className="flex flex-col lg:flex-row gap-8">
                 
-                {slots.map((slot) => (
-                  <VideoCard
-                    key={slot.id}
-                    slot={slot}
-                    onUpdate={updateSlot}
-                    onGenerateAI={handleAiGeneration}
-                    onDelete={deleteSlot}
-                    t={t}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+                {/* Left Sidebar */}
+                <aside className="lg:w-80 shrink-0 space-y-6">
+                    <ConfigPanel 
+                        config={config} 
+                        platform={activeProfile.platform}
+                        profileName={activeProfile.name}
+                        setConfig={handleConfigChange} 
+                        onGenerate={generateSchedule} 
+                        t={t} 
+                    />
+                    
+                    {/* AI Analysis */}
+                    {slots.length > 0 && config.videoType === 'LONG' && (
+                    <div className="bg-indigo-900 dark:bg-indigo-950 rounded-2xl p-6 text-indigo-100 shadow-lg relative overflow-hidden border border-indigo-800/50">
+                        <div className="absolute top-0 right-0 p-4 opacity-10"><Zap size={64} /></div>
+                        <h3 className="font-bold text-white mb-2 flex items-center gap-2"><Zap size={16} className="text-yellow-400" fill="currentColor"/> {t.aiCoachTitle}</h3>
+                        <p className="text-sm text-indigo-200 mb-4 leading-relaxed">{aiTip || t.aiCoachDesc}</p>
+                        <button onClick={handleGlobalAnalysis} className="w-full bg-white/10 hover:bg-white/20 text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors border border-white/20">{aiTip ? t.aiCoachBtnActive : t.aiCoachBtn}</button>
+                    </div>
+                    )}
+                </aside>
 
-        </div>
+                {/* Main Content */}
+                <div className="flex-1">
+                    <StatsWidget slots={slots} t={t} />
+
+                    {loadingData ? (
+                        <div className="text-center py-10 text-slate-400">Loading schedule...</div>
+                    ) : slots.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-600">
+                        <Zap size={48} className="mb-4 opacity-20" />
+                        <p className="font-medium">{t.noScheduleTitle}</p>
+                        <p className="text-sm">{t.noScheduleDesc}</p>
+                    </div>
+                    ) : (
+                    <div className={config.videoType === 'SHORT' ? "grid gap-2" : "space-y-4"}>
+                        {slots.some(s => s.type === 'SHORT') && (
+                            <div className="flex px-3 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
+                            <div className="w-12">{t.headerTime}</div>
+                            <div className="w-5 mx-3">{t.headerDone}</div>
+                            <div className="flex-1">{t.headerTopic}</div>
+                            <div className="w-24 text-right">{t.headerStatus}</div>
+                            </div>
+                        )}
+                        
+                        {slots.map((slot) => (
+                        <VideoCard
+                            key={slot.id}
+                            slot={slot}
+                            onUpdate={updateSlot}
+                            onGenerateAI={handleAiGeneration}
+                            onDelete={deleteSlot}
+                            t={t}
+                        />
+                        ))}
+                    </div>
+                    )}
+                </div>
+
+                </div>
+            </>
+        )}
       </main>
       
-      {/* Background Toggle Overlay to prevent FOUC for exportMenu */}
-      {exportMenuOpen && (
-        <div className="fixed inset-0 z-40" onClick={() => setExportMenuOpen(false)}></div>
-      )}
+      {exportMenuOpen && <div className="fixed inset-0 z-40" onClick={() => setExportMenuOpen(false)}></div>}
     </div>
   );
 };

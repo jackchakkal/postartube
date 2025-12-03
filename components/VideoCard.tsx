@@ -7,7 +7,7 @@ interface VideoCardProps {
   onUpdate: (id: string, updates: Partial<VideoSlot>) => void;
   onGenerateAI: (id: string, topic: string) => void;
   onDelete: (id: string) => void;
-  t: any; // Translation helper
+  t: any;
 }
 
 export const VideoCard: React.FC<VideoCardProps> = ({ slot, onUpdate, onGenerateAI, onDelete, t }) => {

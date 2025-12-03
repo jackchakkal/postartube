@@ -1,18 +1,31 @@
 import React from 'react';
-import { ChannelConfig } from '../types';
-import { Settings, Calendar, PlaySquare, Smartphone, MonitorPlay } from 'lucide-react';
+import { ChannelConfig, Platform, PLATFORM_CONFIG } from '../types';
+import { Settings, Calendar, PlaySquare, Smartphone, MonitorPlay, Youtube, Facebook, Instagram } from 'lucide-react';
 
 interface ConfigPanelProps {
   config: ChannelConfig;
+  platform: Platform;
+  profileName: string;
   setConfig: (config: ChannelConfig) => void;
   onGenerate: () => void;
-  t: any; // Translation helper
+  t: any;
 }
 
-export const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate, t }) => {
+export const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, platform, profileName, setConfig, onGenerate, t }) => {
   const handleChange = (key: keyof ChannelConfig, value: any) => {
     setConfig({ ...config, [key]: value });
   };
+
+  const getPlatformIcon = (p: Platform) => {
+     switch(p) {
+        case 'YOUTUBE': return <Youtube size={18} />;
+        case 'FACEBOOK': return <Facebook size={18} />;
+        case 'INSTAGRAM': return <Instagram size={18} />;
+        case 'TIKTOK': return <div className="font-bold text-xs">Tk</div>;
+     }
+  }
+
+  const platformInfo = PLATFORM_CONFIG[platform];
 
   return (
     <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 h-fit sticky top-6">
@@ -23,18 +36,19 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onG
 
       <div className="space-y-6">
         
-        {/* Channel Name */}
+        {/* Channel Name (Read Only) */}
         <div>
           <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-2">{t.channelName}</label>
           <div className="relative">
             <input
               type="text"
-              value={config.channelName}
-              onChange={(e) => handleChange('channelName', e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all text-sm font-medium dark:text-white"
-              placeholder={t.channelPlaceholder}
+              readOnly
+              value={profileName}
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm font-bold text-slate-600 dark:text-slate-400 cursor-not-allowed"
             />
-            <PlaySquare className="absolute left-3 top-2.5 text-slate-400" size={18} />
+            <div className={`absolute left-3 top-2.5 ${platformInfo.color}`}>
+               {getPlatformIcon(platform)}
+            </div>
           </div>
         </div>
 
