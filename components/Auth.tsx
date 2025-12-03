@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { Mail, Lock, LogIn, UserPlus, AlertTriangle } from 'lucide-react';
@@ -8,6 +9,7 @@ export const Auth: React.FC<{ t: any }> = ({ t }) => {
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState<'LOGIN' | 'SIGNUP'>('LOGIN');
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
 
   if (!isSupabaseConfigured()) {
     return (
@@ -31,12 +33,22 @@ export const Auth: React.FC<{ t: any }> = ({ t }) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setInfo('');
 
     try {
       if (mode === 'SIGNUP') {
         const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-        alert('Check your email for the confirmation link!');
+        if (error) {
+            // Se o usuário já existe no banco compartilhado, sugerimos o login
+            if (error.message.includes("already registered")) {
+                setError("Este email já possui conta. Tente fazer Login.");
+                setMode('LOGIN');
+            } else {
+                throw error;
+            }
+        } else {
+            setInfo('Conta criada! Verifique seu email ou faça login se a confirmação não for necessária.');
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -53,7 +65,9 @@ export const Auth: React.FC<{ t: any }> = ({ t }) => {
       <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-200 dark:border-slate-700">
         <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">PostarTube</h1>
-            <p className="text-slate-500 dark:text-slate-400">Login to manage your content</p>
+            <p className="text-slate-500 dark:text-slate-400">
+                {mode === 'LOGIN' ? 'Login' : 'Criar Nova Conta'}
+            </p>
         </div>
 
         <form onSubmit={handleAuth} className="space-y-4">
@@ -73,7 +87,7 @@ export const Auth: React.FC<{ t: any }> = ({ t }) => {
             </div>
             
             <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Password</label>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Senha</label>
                 <div className="relative">
                     <Lock className="absolute left-3 top-3 text-slate-400" size={18} />
                     <input 
@@ -88,22 +102,23 @@ export const Auth: React.FC<{ t: any }> = ({ t }) => {
             </div>
 
             {error && <div className="text-red-500 text-sm text-center bg-red-50 dark:bg-red-900/20 p-2 rounded">{error}</div>}
+            {info && <div className="text-emerald-600 text-sm text-center bg-emerald-50 dark:bg-emerald-900/20 p-2 rounded">{info}</div>}
 
             <button 
                 type="submit" 
                 disabled={loading}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2"
             >
-                {loading ? 'Processing...' : mode === 'LOGIN' ? <><LogIn size={18}/> Login</> : <><UserPlus size={18}/> Sign Up</>}
+                {loading ? 'Processando...' : mode === 'LOGIN' ? <><LogIn size={18}/> Entrar</> : <><UserPlus size={18}/> Cadastrar</>}
             </button>
         </form>
 
         <div className="mt-6 text-center">
             <button 
-                onClick={() => { setMode(mode === 'LOGIN' ? 'SIGNUP' : 'LOGIN'); setError(''); }}
+                onClick={() => { setMode(mode === 'LOGIN' ? 'SIGNUP' : 'LOGIN'); setError(''); setInfo(''); }}
                 className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
             >
-                {mode === 'LOGIN' ? "Don't have an account? Sign Up" : "Already have an account? Login"}
+                {mode === 'LOGIN' ? "Não tem conta? Cadastrar" : "Já tem conta? Entrar"}
             </button>
         </div>
       </div>

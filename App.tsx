@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { ChannelConfig, VideoSlot, VideoStatus, Language, ChannelProfile, DbProfile, DbSlot, Platform, PLATFORM_CONFIG } from './types';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -32,12 +33,8 @@ const App: React.FC = () => {
   const [sessionLoading, setSessionLoading] = useState(true);
 
   // --- UI STATE ---
-  const [lang, setLang] = useState<Language>(() => (localStorage.getItem('postartube_lang') as Language) || 'pt');
-  const [darkMode, setDarkMode] = useState<boolean>(() => {
-    const saved = localStorage.getItem('postartube_theme');
-    if (saved) return saved === 'dark';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
-  });
+  const [lang, setLang] = useState<Language>('pt'); // Default inicial
+  const [darkMode, setDarkMode] = useState<boolean>(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [channelManagerOpen, setChannelManagerOpen] = useState(false);
   const [aiTip, setAiTip] = useState<string>("");
@@ -49,28 +46,71 @@ const App: React.FC = () => {
   const [slots, setSlots] = useState<VideoSlot[]>([]);
   const [loadingData, setLoadingData] = useState(false);
 
-  // 1. Auth Init
+  // 1. Auth Init & Config Load
   useEffect(() => {
-    if (!isSupabaseConfigured()) {
+    // Always init because we have mock fallback now
+    const init = async () => {
+        try {
+            const { data } = await supabase.auth.getSession();
+            const session = data?.session;
+            setSession(session);
+            if (session) {
+                await loadUserConfig(session.user.id);
+            } else {
+                 // Fallback to local storage if not logged in
+                 const localLang = localStorage.getItem('postartube_lang') as Language;
+                 if(localLang) setLang(localLang);
+                 const localTheme = localStorage.getItem('postartube_theme');
+                 if(localTheme) setDarkMode(localTheme === 'dark');
+            }
+        } catch (e) {
+            console.error("Auth init error", e);
+        }
         setSessionLoading(false);
-        return;
-    }
+    };
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setSessionLoading(false);
-    }).catch(() => {
-      setSessionLoading(false);
-    });
+    init();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event: any, session: any) => {
       setSession(session);
+      if (session) {
+          await loadUserConfig(session.user.id);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // 2. Load Profiles
+  // 2. Load User Configuration (Theme/Lang) from DB
+  const loadUserConfig = async (userId: string) => {
+      const { data, error } = await supabase
+          .from('p12_user_config')
+          .select('*')
+          .eq('user_id', userId)
+          .single();
+      
+      if (data) {
+          setLang(data.language as Language);
+          setDarkMode(data.theme === 'dark');
+      } else {
+          // Create default config if not exists
+          await supabase.from('p12_user_config').upsert({
+              user_id: userId,
+              theme: 'light',
+              language: 'pt'
+          });
+      }
+  };
+
+  const updateUserConfig = async (updates: { theme?: string, language?: string }) => {
+      if (!session) return;
+      await supabase.from('p12_user_config').upsert({
+          user_id: session.user.id,
+          ...updates
+      });
+  };
+
+  // 3. Load Profiles
   useEffect(() => {
     if (session) {
        loadProfiles();
@@ -89,7 +129,7 @@ const App: React.FC = () => {
                   videosPerDay: p.default_videos_per_day,
                   startTime: p.default_start_time,
                   endTime: p.default_end_time,
-                  videoType: 'LONG' // Default for UI, DB doesn't store this preference per se yet
+                  videoType: 'LONG'
               }
           }));
           setProfiles(mapped);
@@ -99,7 +139,7 @@ const App: React.FC = () => {
       }
   };
 
-  // 3. Load Slots (When Profile or Date Changes)
+  // 4. Load Slots
   useEffect(() => {
      if (activeProfileId && selectedDate) {
          loadSlots();
@@ -136,32 +176,37 @@ const App: React.FC = () => {
       setLoadingData(false);
   };
 
-  // --- THEME & LANG ---
+  // --- THEME & LANG EFFECT ---
   useEffect(() => {
-    localStorage.setItem('postartube_lang', lang);
-  }, [lang]);
-
-  useEffect(() => {
-    localStorage.setItem('postartube_theme', darkMode ? 'dark' : 'light');
     if (darkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
-  }, [darkMode]);
+    // Backup local
+    localStorage.setItem('postartube_theme', darkMode ? 'dark' : 'light');
+    localStorage.setItem('postartube_lang', lang);
+  }, [darkMode, lang]);
+
+  const toggleTheme = () => {
+      const newVal = !darkMode;
+      setDarkMode(newVal);
+      updateUserConfig({ theme: newVal ? 'dark' : 'light' });
+  };
+
+  const changeLang = (l: Language) => {
+      setLang(l);
+      updateUserConfig({ language: l });
+  };
 
   // Derived State
   const t = translations[lang];
   const activeProfile = profiles.find(p => p.id === activeProfileId);
-  // We use a local config state to drive the inputs, syncing with DB on save
   const config = activeProfile?.config || { videosPerDay: 3, startTime: '09:00', endTime: '18:00', videoType: 'LONG' };
 
   // --- ACTIONS ---
 
   const handleConfigChange = async (newConfig: ChannelConfig) => {
-      // Optimistic Update
       setProfiles(prev => prev.map(p => 
           p.id === activeProfileId ? { ...p, config: newConfig } : p
       ));
-
-      // Save to DB (Debounce ideal, but simple save for now)
       await supabase.from('p12_profiles').update({
           default_videos_per_day: newConfig.videosPerDay,
           default_start_time: newConfig.startTime,
@@ -194,9 +239,11 @@ const App: React.FC = () => {
       else setActiveProfileId('');
   };
 
-  // --- SCHEDULE GENERATOR (RANDOMIZED) ---
+  // --- GENERATOR ---
 
   const generateSchedule = async () => {
+    if (!activeProfileId) return;
+    
     const startMins = timeToMins(config.startTime);
     const endMins = timeToMins(config.endTime);
     const count = config.videosPerDay;
@@ -211,15 +258,20 @@ const App: React.FC = () => {
     // RANDOM ALGORITHM
     const randomTimes: number[] = [];
     for (let i = 0; i < count; i++) {
-        // Generate random minute between start and end
         const rand = Math.floor(Math.random() * (endMins - startMins + 1)) + startMins;
         randomTimes.push(rand);
     }
-    // Sort chronologically
     randomTimes.sort((a, b) => a - b);
 
-    // Create DbSlots
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
+
+    // 1. CLEAR EXISTING SLOTS FOR THIS PROFILE AND DATE
+    await supabase.from('p12_slots')
+        .delete()
+        .eq('profile_id', activeProfileId)
+        .eq('date', dateStr);
+
+    // 2. INSERT NEW SLOTS
     const newDbSlots = randomTimes.map(timeMins => ({
         profile_id: activeProfileId,
         date: dateStr,
@@ -231,7 +283,6 @@ const App: React.FC = () => {
         description: ''
     }));
 
-    // Batch Insert
     const { error } = await supabase.from('p12_slots').insert(newDbSlots);
     if (error) {
         console.error(error);
@@ -242,17 +293,12 @@ const App: React.FC = () => {
   };
 
   const updateSlot = async (id: string, updates: Partial<VideoSlot>) => {
-    // Optimistic UI
     setSlots(slots.map(s => s.id === id ? { ...s, ...updates } : s));
-
-    // DB Update
-    // Map UI keys to DB keys if necessary (here mostly same, except camelCase vs snake)
     const dbUpdates: any = {};
     if (updates.status) dbUpdates.status = updates.status;
     if (updates.topic !== undefined) dbUpdates.topic = updates.topic;
     if (updates.title !== undefined) dbUpdates.title = updates.title;
     if (updates.description !== undefined) dbUpdates.description = updates.description;
-
     await supabase.from('p12_slots').update(dbUpdates).eq('id', id);
   };
 
@@ -269,17 +315,13 @@ const App: React.FC = () => {
       }
   };
 
-  // --- AI ---
+  // --- AI & EXPORT (Same as before) ---
   const handleAiGeneration = async (id: string, topic: string) => {
     if (!topic) return;
     updateSlot(id, { aiLoading: true });
     try {
       const data = await generateVideoDetails(topic, activeProfile?.name || '');
-      updateSlot(id, {
-        title: data.title,
-        description: data.description,
-        aiLoading: false
-      });
+      updateSlot(id, { title: data.title, description: data.description, aiLoading: false });
     } catch (error) {
       alert("AI Error");
       updateSlot(id, { aiLoading: false });
@@ -291,9 +333,7 @@ const App: React.FC = () => {
       setAiTip(tip);
   };
 
-  // --- EXPORTS ---
   const exportCSV = () => {
-    // ... same as before but using slot state ...
     const BOM = "\uFEFF"; 
     const headers = ['Date', 'Time', 'Type', 'Topic', 'Status', 'Title', 'Description'];
     const csvContent = "data:text/csv;charset=utf-8," + BOM
@@ -309,11 +349,9 @@ const App: React.FC = () => {
             `"${s.description.replace(/"/g, '""')}"`
           ].join(',');
       })].join('\n');
-      
       const encodedUri = encodeURI(csvContent);
       const link = document.createElement("a");
       link.setAttribute("href", encodedUri);
-      
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
       link.setAttribute("download", `PostarTube_${activeProfile?.name}_${dateStr}.csv`);
       document.body.appendChild(link);
@@ -322,7 +360,6 @@ const App: React.FC = () => {
   };
 
   const exportTXT = () => {
-     // ... simple text export ...
      let content = `PostarTube - ${activeProfile?.name}\n`;
      content += `Date: ${format(selectedDate, 'yyyy-MM-dd')}\n`;
      slots.forEach(s => {
@@ -367,7 +404,6 @@ const App: React.FC = () => {
             </div>
             <h1 className="text-xl font-bold text-slate-800 dark:text-white tracking-tight">{t.appTitle}</h1>
             
-            {/* Profile Pill */}
             {activeProfile && (
                 <div className="ml-4 flex items-center gap-2">
                 <button 
@@ -385,12 +421,12 @@ const App: React.FC = () => {
           <div className="flex items-center gap-3">
             <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
                {(['pt', 'es', 'en'] as Language[]).map(l => (
-                   <button key={l} onClick={() => setLang(l)} className={`px-2 py-1 text-xs font-bold rounded uppercase ${lang === l ? 'bg-white dark:bg-slate-600 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400'}`}>{l}</button>
+                   <button key={l} onClick={() => changeLang(l)} className={`px-2 py-1 text-xs font-bold rounded uppercase ${lang === l ? 'bg-white dark:bg-slate-600 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400'}`}>{l}</button>
                ))}
             </div>
 
             <button 
-              onClick={() => setDarkMode(!darkMode)}
+              onClick={toggleTheme}
               className="p-2 text-slate-500 dark:text-indigo-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
             >
               {darkMode ? <Sun size={20} /> : <Moon size={20} />}
@@ -436,7 +472,6 @@ const App: React.FC = () => {
 
                 <div className="flex flex-col lg:flex-row gap-8">
                 
-                {/* Left Sidebar */}
                 <aside className="lg:w-80 shrink-0 space-y-6">
                     <ConfigPanel 
                         config={config} 
@@ -447,7 +482,6 @@ const App: React.FC = () => {
                         t={t} 
                     />
                     
-                    {/* AI Analysis */}
                     {slots.length > 0 && config.videoType === 'LONG' && (
                     <div className="bg-indigo-900 dark:bg-indigo-950 rounded-2xl p-6 text-indigo-100 shadow-lg relative overflow-hidden border border-indigo-800/50">
                         <div className="absolute top-0 right-0 p-4 opacity-10"><Zap size={64} /></div>
@@ -458,7 +492,6 @@ const App: React.FC = () => {
                     )}
                 </aside>
 
-                {/* Main Content */}
                 <div className="flex-1">
                     <StatsWidget slots={slots} t={t} />
 

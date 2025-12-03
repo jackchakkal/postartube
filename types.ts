@@ -1,3 +1,4 @@
+
 export enum VideoStatus {
   PLANNING = 'PLANNING',
   SCRIPTING = 'SCRIPTING',
@@ -34,6 +35,12 @@ export interface DbSlot {
   title: string | null;
   description: string | null;
   status: VideoStatus;
+}
+
+export interface DbUserConfig {
+  user_id: string;
+  theme: 'light' | 'dark';
+  language: Language;
 }
 
 // Extracted ChannelConfig for shared use

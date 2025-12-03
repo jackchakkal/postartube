@@ -1,5 +1,6 @@
 import React from 'react';
-import { format, addDays, subDays, isSameDay } from 'date-fns';
+// Fix: Removed subDays from import as it is not consistently available in all environments/versions
+import { format, addDays, isSameDay } from 'date-fns';
 import { ptBR, es, enUS } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, Calendar as CalIcon } from 'lucide-react';
 import { Language } from '../types';
@@ -21,7 +22,8 @@ export const CalendarSelector: React.FC<CalendarSelectorProps> = ({ selectedDate
   return (
     <div className="flex items-center justify-center gap-4 py-4 mb-6">
         <button 
-            onClick={() => onSelect(subDays(selectedDate, 1))}
+            // Fix: Replaced subDays(selectedDate, 1) with addDays(selectedDate, -1) to achieve same result
+            onClick={() => onSelect(addDays(selectedDate, -1))}
             className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400"
         >
             <ChevronLeft size={24} />
