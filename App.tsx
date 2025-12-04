@@ -336,18 +336,19 @@ const App: React.FC = () => {
       console.log("Creating profile...", { name, platform, userId: session.user.id });
 
       try {
-          // Helper para criar timeout em Promise
-          const withTimeout = <T,>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> => {
-              return Promise.race([
-                  promise,
-                  new Promise<T>((_, reject) =>
-                      setTimeout(() => reject(new Error(errorMsg)), ms)
-                  )
-              ]);
-          };
-
           console.log("Sending insert request to Supabase...");
           const startTime = performance.now();
+
+          // Timeout de 15 segundos para a operação
+          const timeoutPromise = new Promise<{ data: null; error: { message: string; code: string } }>((resolve) =>
+              setTimeout(() => resolve({
+                  data: null,
+                  error: {
+                      message: 'Timeout: A conexão com o banco de dados demorou muito. Verifique sua conexão e as políticas de segurança (RLS) no Supabase.',
+                      code: 'TIMEOUT'
+                  }
+              }), 15000)
+          );
 
           const insertPromise = supabase.from('p12_profiles').insert({
               user_id: session.user.id,
@@ -358,12 +359,8 @@ const App: React.FC = () => {
               default_end_time: '18:00'
           }).select().single();
 
-          // Timeout de 15 segundos para a operação
-          const { data, error } = await withTimeout(
-              insertPromise,
-              15000,
-              'Timeout: A conexão com o banco de dados demorou muito. Verifique sua conexão e as políticas de segurança (RLS) no Supabase.'
-          );
+          const result = await Promise.race([insertPromise, timeoutPromise]);
+          const { data, error } = result;
 
           const duration = (performance.now() - startTime).toFixed(0);
           console.log(`Supabase response (${duration}ms):`, { data, error });
@@ -371,7 +368,9 @@ const App: React.FC = () => {
           if (error) {
               console.error("Supabase Create Profile Error:", error);
               // Mensagens mais amigáveis para erros comuns
-              if (error.code === '42501' || error.message?.includes('policy')) {
+              if (error.code === 'TIMEOUT') {
+                  alert(error.message);
+              } else if (error.code === '42501' || error.message?.includes('policy')) {
                   alert('Erro de permissão: Verifique as políticas RLS da tabela p12_profiles no Supabase.');
               } else if (error.code === '23505') {
                   alert('Erro: Já existe um perfil com este nome.');
@@ -394,11 +393,7 @@ const App: React.FC = () => {
           }
       } catch (err: any) {
           console.error("Exception creating profile:", err);
-          if (err.message?.includes('Timeout')) {
-              alert(err.message);
-          } else {
-              alert(`Erro inesperado: ${err.message || 'Consulte o console para mais detalhes'}`);
-          }
+          alert(`Erro inesperado: ${err.message || 'Consulte o console para mais detalhes'}`);
       }
   };
 
