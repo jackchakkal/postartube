@@ -81,27 +81,114 @@ const App: React.FC = () => {
 
   // Teste detalhado de operações CRUD (para debug)
   const testCrudOperations = async () => {
-      if (!session?.user?.id) return;
+      if (!session?.user?.id) {
+          console.log("🧪 CRUD Test: Sem sessão, ignorando teste");
+          return;
+      }
 
-      console.group("🧪 TESTE DE OPERAÇÕES CRUD");
+      console.group("🧪 DIAGNÓSTICO COMPLETO DE OPERAÇÕES");
 
-      // Teste SELECT
-      console.log("Testando SELECT...");
+      // 1. Verificar token de autenticação
+      console.log("1️⃣ Verificando autenticação...");
+      const { data: authData, error: authError } = await supabase.auth.getSession();
+      if (authError) {
+          console.error("❌ Erro ao obter sessão:", authError);
+      } else if (authData?.session) {
+          console.log("✅ Sessão válida:", {
+              user_id: authData.session.user.id,
+              email: authData.session.user.email,
+              expires_at: authData.session.expires_at,
+              token_type: authData.session.token_type
+          });
+          // Verificar se o token está expirado
+          const expiresAt = new Date((authData.session.expires_at || 0) * 1000);
+          const now = new Date();
+          if (expiresAt < now) {
+              console.error("❌ TOKEN EXPIRADO! Expira em:", expiresAt.toISOString());
+          } else {
+              console.log("✅ Token válido até:", expiresAt.toISOString());
+          }
+      } else {
+          console.error("❌ Nenhuma sessão encontrada");
+      }
+
+      // 2. Teste SELECT
+      console.log("2️⃣ Testando SELECT em p12_profiles...");
       const selectStart = performance.now();
-      const { data: selectData, error: selectError } = await supabase
+      const { data: selectData, error: selectError, status: selectStatus } = await supabase
           .from('p12_profiles')
-          .select('id')
-          .limit(1);
-      console.log(`SELECT (${(performance.now() - selectStart).toFixed(0)}ms):`, selectError ? `❌ ${selectError.message}` : '✅ OK');
+          .select('id, name')
+          .limit(5);
+      const selectDuration = (performance.now() - selectStart).toFixed(0);
 
-      // Nota: Não executamos INSERT/DELETE de teste para não criar dados lixo
-      // O problema mais comum é RLS bloqueando INSERT
-      console.log("Para testar INSERT, tente criar um perfil pela interface.");
-      console.log("Se travar, verifique as políticas RLS no Supabase Dashboard:");
-      console.log("  1. Acesse: Authentication > Policies");
-      console.log("  2. Procure a tabela p12_profiles");
-      console.log("  3. Certifique-se que existe uma política INSERT para 'authenticated'");
-      console.log("  4. A política deve ser: (auth.uid() = user_id)");
+      if (selectError) {
+          console.error(`❌ SELECT falhou (${selectDuration}ms):`, {
+              message: selectError.message,
+              code: selectError.code,
+              status: selectStatus
+          });
+      } else {
+          console.log(`✅ SELECT OK (${selectDuration}ms):`, {
+              registros: selectData?.length || 0,
+              dados: selectData
+          });
+      }
+
+      // 3. Teste INSERT com timeout curto (5s)
+      console.log("3️⃣ Testando INSERT em p12_profiles (timeout 5s)...");
+      const testId = `test_${Date.now()}`;
+      const insertStart = performance.now();
+
+      const insertTimeoutPromise = new Promise<{ data: null; error: { message: string; code: string } }>((resolve) =>
+          setTimeout(() => resolve({
+              data: null,
+              error: { message: 'TIMEOUT após 5s - RLS provavelmente bloqueando INSERT', code: 'TEST_TIMEOUT' }
+          }), 5000)
+      );
+
+      const insertTestPromise = supabase.from('p12_profiles').insert({
+          user_id: session.user.id,
+          name: testId,
+          platform: 'YOUTUBE',
+          default_videos_per_day: 1,
+          default_start_time: '09:00',
+          default_end_time: '18:00'
+      }).select().single();
+
+      const insertResult = await Promise.race([insertTestPromise, insertTimeoutPromise]);
+      const insertDuration = (performance.now() - insertStart).toFixed(0);
+
+      if (insertResult.error) {
+          console.error(`❌ INSERT falhou (${insertDuration}ms):`, insertResult.error);
+          if (insertResult.error.code === 'TEST_TIMEOUT') {
+              console.error("%c⚠️ PROBLEMA DETECTADO: INSERT travou! Isso indica problema de RLS no Supabase.", "color: red; font-weight: bold; font-size: 14px");
+              console.log("%cSOLUÇÃO: Acesse o Supabase Dashboard e adicione uma política INSERT para a tabela p12_profiles", "color: orange; font-weight: bold");
+              console.log("SQL para criar a política:");
+              console.log(`CREATE POLICY "Enable insert for authenticated users" ON "public"."p12_profiles" FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);`);
+          }
+      } else {
+          console.log(`✅ INSERT OK (${insertDuration}ms):`, insertResult.data);
+
+          // 4. Se INSERT funcionou, deletar o registro de teste
+          if (insertResult.data?.id) {
+              console.log("4️⃣ Limpando registro de teste...");
+              const { error: delError } = await supabase
+                  .from('p12_profiles')
+                  .delete()
+                  .eq('id', insertResult.data.id);
+
+              if (delError) {
+                  console.warn("⚠️ Não foi possível deletar registro de teste:", delError);
+              } else {
+                  console.log("✅ Registro de teste removido");
+              }
+          }
+      }
+
+      console.log("📋 RESUMO DO DIAGNÓSTICO:");
+      console.log("- Se SELECT funcionou mas INSERT travou = PROBLEMA DE RLS");
+      console.log("- Se ambos falharam = PROBLEMA DE CONEXÃO ou CREDENCIAIS");
+      console.log("- Se ambos funcionaram = TUDO OK!");
 
       console.groupEnd();
   };
