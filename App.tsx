@@ -9,7 +9,7 @@ import { generateVideoDetails, analyzeSchedule } from './services/geminiService'
 import { translations } from './translations';
 import { Auth } from './components/Auth';
 import { CalendarSelector } from './components/CalendarSelector';
-import { supabase, isSupabaseConfigured } from './services/supabase';
+import { supabase } from './services/supabase';
 import { format } from 'date-fns';
 import { Zap, Download, RotateCcw, Smartphone, Moon, Sun, FileText, FileSpreadsheet, Users, ChevronDown, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 
@@ -53,44 +53,23 @@ const App: React.FC = () => {
     const init = async () => {
         try {
             console.log("App: Initializing authentication...");
-            // Timeout de segurança: Se demorar mais que 5s, libera a tela de login
-            const timeoutPromise = new Promise((resolve) => 
-                setTimeout(() => {
-                    console.warn("Auth timeout - showing login screen");
-                    resolve(null);
-                }, 15000)
-            );
-
-            // Race: O que vier primeiro (sessão real ou timeout) ganha
-            await Promise.race([
-                (async () => {
-                    const { data, error } = await supabase.auth.getSession();
-                    if (error) { 
-                        console.warn("Session check error:", error.message);
-                        return; // Deixa o timeout ou o fluxo seguir sem sessão
-                    }
-                    
-                    if (mounted && data?.session) {
-                        const session = data.session;
-                        setSession(session);
-                        console.log("App: Session found, loading config...");
-                        await loadUserConfig(session.user.id);
-                    }
-                })(),
-                timeoutPromise
-            ]);
-
-            // Fallback para defaults locais se não houver sessão
-            if (mounted && !session) {
-                 const localLang = localStorage.getItem('postartube_lang') as Language;
-                 if(localLang) setLang(localLang);
-                 const localTheme = localStorage.getItem('postartube_theme');
-                 if(localTheme) setDarkMode(localTheme === 'dark');
+            const { data, error } = await supabase.auth.getSession();
+            
+            if (error) { 
+                console.warn("Session check error:", error.message);
+            }
+            
+            if (mounted) {
+                if (data?.session) {
+                    setSession(data.session);
+                    console.log("App: Session found.");
+                    await loadUserConfig(data.session.user.id);
+                }
+                setSessionLoading(false);
             }
 
         } catch (e: any) {
-            console.error("Auth init exception (non-fatal):", e);
-        } finally {
+            console.error("Auth init exception:", e);
             if (mounted) setSessionLoading(false);
         }
     };
@@ -102,6 +81,11 @@ const App: React.FC = () => {
       setSession(session);
       if (session) {
           await loadUserConfig(session.user.id);
+      } else {
+          // Reset state on logout
+          setProfiles([]);
+          setActiveProfileId('');
+          setSlots([]);
       }
     });
 
@@ -153,7 +137,10 @@ const App: React.FC = () => {
 
   const loadProfiles = async () => {
       const { data, error } = await supabase.from('p12_profiles').select('*');
-      if (error) console.error("Error loading profiles:", error);
+      if (error) {
+          console.error("Error loading profiles:", error);
+          return;
+      }
       if (data) {
           const mapped: ChannelProfile[] = data.map((p: DbProfile) => ({
               id: p.id,
@@ -167,8 +154,14 @@ const App: React.FC = () => {
               }
           }));
           setProfiles(mapped);
-          if (mapped.length > 0 && !activeProfileId) {
-              setActiveProfileId(mapped[0].id);
+          
+          // If active profile is deleted or not set, default to first one
+          if (mapped.length > 0) {
+             if (!activeProfileId || !mapped.find(p => p.id === activeProfileId)) {
+                 setActiveProfileId(mapped[0].id);
+             }
+          } else {
+              setActiveProfileId('');
           }
       }
   };
@@ -191,7 +184,7 @@ const App: React.FC = () => {
           .eq('date', dateStr)
           .order('time', { ascending: true });
 
-      if (error) console.error(error);
+      if (error) console.error("Error loading slots:", error);
       
       if (data) {
           const mapped: VideoSlot[] = data.map((s: DbSlot) => ({
@@ -206,6 +199,8 @@ const App: React.FC = () => {
               date: s.date
           }));
           setSlots(mapped);
+      } else {
+          setSlots([]);
       }
       setLoadingData(false);
   };
@@ -250,6 +245,7 @@ const App: React.FC = () => {
 
   const handleCreateProfile = async (name: string, platform: Platform) => {
       try {
+          console.log("Creating profile...", {name, platform});
           const { data, error } = await supabase.from('p12_profiles').insert({
               user_id: session.user.id,
               name: name,
@@ -260,7 +256,9 @@ const App: React.FC = () => {
           }).select().single();
 
           if (error) {
-              throw error;
+              console.error("Supabase Create Profile Error:", error);
+              alert(`Erro ao salvar no banco de dados: ${error.message}`);
+              return;
           }
 
           if (data) {
@@ -269,17 +267,18 @@ const App: React.FC = () => {
               setChannelManagerOpen(false);
           }
       } catch (err: any) {
-          console.error("Error creating profile:", err);
-          alert(`Erro ao criar perfil: ${err.message || 'Unknown error'}`);
+          console.error("Exception creating profile:", err);
+          alert(`Erro inesperado: ${err.message || 'Consulte o console'}`);
       }
   };
 
   const handleDeleteProfile = async (id: string) => {
-      await supabase.from('p12_profiles').delete().eq('id', id);
-      const remaining = profiles.filter(p => p.id !== id);
-      setProfiles(remaining);
-      if (remaining.length > 0) setActiveProfileId(remaining[0].id);
-      else setActiveProfileId('');
+      const { error } = await supabase.from('p12_profiles').delete().eq('id', id);
+      if (error) {
+          alert(`Erro ao deletar: ${error.message}`);
+          return;
+      }
+      await loadProfiles();
   };
 
   // --- GENERATOR ---
@@ -315,10 +314,9 @@ const App: React.FC = () => {
     randomTimes.sort((a, b) => a - b);
 
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
-    console.log(`Generating schedule for ${dateStr} - Deleting old slots...`);
+    console.log(`Generating schedule for ${dateStr}. Deleting old slots first.`);
 
     // 1. CLEAR EXISTING SLOTS FOR THIS PROFILE AND DATE
-    // Importante: Await para garantir que o Mock/Supabase termine de apagar antes de inserir
     const { error: delError } = await supabase.from('p12_slots')
         .delete()
         .eq('profile_id', activeProfileId)
@@ -326,7 +324,7 @@ const App: React.FC = () => {
 
     if (delError) {
         console.error("Error clearing slots:", delError);
-        alert('Failed to clear old schedule. Please try again.');
+        alert(`Failed to clear old schedule: ${delError.message}`);
         setLoadingData(false);
         return;
     }
@@ -346,10 +344,9 @@ const App: React.FC = () => {
     const { error: insError } = await supabase.from('p12_slots').insert(newDbSlots);
     if (insError) {
         console.error("Error inserting slots:", insError);
-        alert('Error saving schedule');
+        alert(`Error saving schedule: ${insError.message}`);
     } else {
-        console.log("Schedule generated successfully");
-        await loadSlots(); // Recarrega para garantir consistência
+        await loadSlots(); // Reload to ensure sync
     }
   };
 
@@ -360,7 +357,9 @@ const App: React.FC = () => {
     if (updates.topic !== undefined) dbUpdates.topic = updates.topic;
     if (updates.title !== undefined) dbUpdates.title = updates.title;
     if (updates.description !== undefined) dbUpdates.description = updates.description;
-    await supabase.from('p12_slots').update(dbUpdates).eq('id', id);
+    
+    const { error } = await supabase.from('p12_slots').update(dbUpdates).eq('id', id);
+    if (error) console.error("Error updating slot:", error);
   };
 
   const deleteSlot = async (id: string) => {
@@ -376,7 +375,7 @@ const App: React.FC = () => {
       }
   };
 
-  // --- AI & EXPORT (Same as before) ---
+  // --- AI & EXPORT ---
   const handleAiGeneration = async (id: string, topic: string) => {
     if (!topic) return;
     updateSlot(id, { aiLoading: true });
@@ -442,7 +441,7 @@ const App: React.FC = () => {
       return (
           <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-500 gap-4">
               <div className="animate-spin text-indigo-500"><RotateCcw size={32} /></div>
-              <p>Loading application...</p>
+              <p>Carregando sistema...</p>
           </div>
       );
   }

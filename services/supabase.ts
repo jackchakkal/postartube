@@ -1,30 +1,22 @@
 
 import { createClient } from '@supabase/supabase-js';
-import { mockSupabase } from './mockSupabase';
 
+// Access environment variables securely
 const env = (import.meta as any).env || {};
+const supabaseUrl = env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || '';
 
-const supabaseUrl = env.VITE_SUPABASE_URL;
-const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY;
+// Debug info (safe to leave in console to verify connection attempt)
+console.log("Initializing Supabase Client...");
 
-// Strict check: must be a string and longer than a minimal placeholder
-const hasConfig = 
-    typeof supabaseUrl === 'string' && 
-    supabaseUrl.length > 10 && 
-    typeof supabaseAnonKey === 'string' && 
-    supabaseAnonKey.length > 10;
-
-console.log("Supabase Client Init:", hasConfig ? "REAL MODE" : "MOCK MODE");
-if (!hasConfig) {
-    console.warn("Supabase config missing or invalid. Falling back to offline mock.");
-    console.debug("URL:", supabaseUrl, "KEY:", supabaseAnonKey ? "******" : "Missing");
+if (!supabaseUrl || !supabaseAnonKey) {
+    console.error("CRITICAL: Supabase environment variables are missing.");
 }
 
-// Se tiver config real, usa o cliente real. Se não, usa o Mock (Offline Mode)
-export const supabase = hasConfig 
-    ? createClient(supabaseUrl, supabaseAnonKey) 
-    : (mockSupabase as any);
+// Initialize the real client unconditionally. 
+// If vars are missing, Supabase will throw a clear error, which is better for debugging production.
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export const isSupabaseConfigured = () => {
-    return true; 
+    return !!supabaseUrl && !!supabaseAnonKey;
 }
