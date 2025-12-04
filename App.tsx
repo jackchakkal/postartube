@@ -297,8 +297,16 @@ const App: React.FC = () => {
   };
 
   const handleCreateProfile = async (name: string, platform: Platform) => {
+      // Verificar sessão antes de tentar criar
+      if (!session?.user?.id) {
+          console.error("handleCreateProfile: Sessão inválida!", { session });
+          alert('Erro: Sessão expirada. Por favor, faça login novamente.');
+          return;
+      }
+
+      console.log("Creating profile...", { name, platform, userId: session.user.id });
+
       try {
-          console.log("Creating profile...", {name, platform});
           const { data, error } = await supabase.from('p12_profiles').insert({
               user_id: session.user.id,
               name: name,
@@ -308,6 +316,8 @@ const App: React.FC = () => {
               default_end_time: '18:00'
           }).select().single();
 
+          console.log("Supabase response:", { data, error });
+
           if (error) {
               console.error("Supabase Create Profile Error:", error);
               alert(`Erro ao salvar no banco de dados: ${error.message}`);
@@ -315,13 +325,19 @@ const App: React.FC = () => {
           }
 
           if (data) {
+              console.log("Profile created successfully:", data);
               await loadProfiles();
               setActiveProfileId(data.id);
+              setChannelManagerOpen(false);
+          } else {
+              // Caso raro: sem erro mas sem dados retornados
+              console.warn("Insert aparentemente bem sucedido mas sem dados retornados. Recarregando perfis...");
+              await loadProfiles();
               setChannelManagerOpen(false);
           }
       } catch (err: any) {
           console.error("Exception creating profile:", err);
-          alert(`Erro inesperado: ${err.message || 'Consulte o console'}`);
+          alert(`Erro inesperado: ${err.message || 'Consulte o console para mais detalhes'}`);
       }
   };
 
