@@ -11,7 +11,7 @@ import { Auth } from './components/Auth';
 import { CalendarSelector } from './components/CalendarSelector';
 import { supabase, isSupabaseConfigured } from './services/supabase';
 import { format } from 'date-fns';
-import { Zap, Download, RotateCcw, Smartphone, Moon, Sun, FileText, FileSpreadsheet, Users, ChevronDown, CheckCircle2 } from 'lucide-react';
+import { Zap, Download, RotateCcw, Smartphone, Moon, Sun, FileText, FileSpreadsheet, Users, ChevronDown, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 
 // --- HELPERS ---
 const timeToMins = (time: string) => {
@@ -31,6 +31,7 @@ const App: React.FC = () => {
   // --- SESSION STATE ---
   const [session, setSession] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
+  const [initError, setInitError] = useState<string | null>(null);
 
   // --- UI STATE ---
   const [lang, setLang] = useState<Language>('pt'); // Default inicial
@@ -48,57 +49,84 @@ const App: React.FC = () => {
 
   // 1. Auth Init & Config Load
   useEffect(() => {
-    // Always init because we have mock fallback now
+    let mounted = true;
+
     const init = async () => {
         try {
-            const { data } = await supabase.auth.getSession();
-            const session = data?.session;
-            setSession(session);
-            if (session) {
-                await loadUserConfig(session.user.id);
-            } else {
-                 // Fallback to local storage if not logged in
-                 const localLang = localStorage.getItem('postartube_lang') as Language;
-                 if(localLang) setLang(localLang);
-                 const localTheme = localStorage.getItem('postartube_theme');
-                 if(localTheme) setDarkMode(localTheme === 'dark');
-            }
-        } catch (e) {
+            // Safety Timeout: Force stop loading after 5 seconds if DB hangs
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error("Connection timeout")), 5000)
+            );
+
+            // Race between actual connection and timeout
+            await Promise.race([
+                (async () => {
+                    const { data, error } = await supabase.auth.getSession();
+                    if (error) throw error;
+                    
+                    if (mounted) {
+                        const session = data?.session;
+                        setSession(session);
+                        if (session) {
+                            await loadUserConfig(session.user.id);
+                        } else {
+                             // Fallback to local storage if not logged in
+                             const localLang = localStorage.getItem('postartube_lang') as Language;
+                             if(localLang) setLang(localLang);
+                             const localTheme = localStorage.getItem('postartube_theme');
+                             if(localTheme) setDarkMode(localTheme === 'dark');
+                        }
+                    }
+                })(),
+                timeoutPromise
+            ]);
+
+        } catch (e: any) {
             console.error("Auth init error", e);
+            if (mounted) setInitError(e.message || "Failed to initialize application");
+        } finally {
+            if (mounted) setSessionLoading(false);
         }
-        setSessionLoading(false);
     };
 
     init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event: any, session: any) => {
+      if (!mounted) return;
       setSession(session);
       if (session) {
           await loadUserConfig(session.user.id);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+        mounted = false;
+        subscription.unsubscribe();
+    };
   }, []);
 
   // 2. Load User Configuration (Theme/Lang) from DB
   const loadUserConfig = async (userId: string) => {
-      const { data, error } = await supabase
-          .from('p12_user_config')
-          .select('*')
-          .eq('user_id', userId)
-          .single();
-      
-      if (data) {
-          setLang(data.language as Language);
-          setDarkMode(data.theme === 'dark');
-      } else {
-          // Create default config if not exists
-          await supabase.from('p12_user_config').upsert({
-              user_id: userId,
-              theme: 'light',
-              language: 'pt'
-          });
+      try {
+          const { data, error } = await supabase
+              .from('p12_user_config')
+              .select('*')
+              .eq('user_id', userId)
+              .single();
+          
+          if (data) {
+              setLang(data.language as Language);
+              setDarkMode(data.theme === 'dark');
+          } else {
+              // Create default config if not exists
+              await supabase.from('p12_user_config').upsert({
+                  user_id: userId,
+                  theme: 'light',
+                  language: 'pt'
+              });
+          }
+      } catch (err) {
+          console.error("Error loading config", err);
       }
   };
 
@@ -385,7 +413,37 @@ const App: React.FC = () => {
 
   // --- RENDER ---
 
-  if (sessionLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-500">Loading...</div>;
+  if (sessionLoading) {
+      return (
+          <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-500 gap-4">
+              <div className="animate-spin text-indigo-500"><RotateCcw size={32} /></div>
+              <p>Loading application...</p>
+          </div>
+      );
+  }
+
+  if (initError) {
+      return (
+          <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 p-6">
+              <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full border border-red-200 dark:border-red-900/50 text-center">
+                  <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600 dark:text-red-400">
+                      <AlertTriangle size={32} />
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">Startup Error</h2>
+                  <p className="text-slate-500 dark:text-slate-400 mb-6 text-sm">
+                      {initError}
+                  </p>
+                  <button 
+                    onClick={() => window.location.reload()}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2"
+                  >
+                      <RefreshCw size={18} /> Retry
+                  </button>
+              </div>
+          </div>
+      );
+  }
+
   if (!session) return <Auth t={t} />;
 
   return (

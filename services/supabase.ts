@@ -7,7 +7,8 @@ const env = (import.meta as any).env || {};
 const supabaseUrl = env.VITE_SUPABASE_URL;
 const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY;
 
-const hasConfig = supabaseUrl && supabaseUrl.length > 0 && supabaseAnonKey && supabaseAnonKey.length > 0;
+// Check not just for existence but also for length to avoid empty strings
+const hasConfig = supabaseUrl && supabaseUrl.length > 5 && supabaseAnonKey && supabaseAnonKey.length > 5;
 
 // Se tiver config real, usa o cliente real. Se não, usa o Mock (Offline Mode)
 export const supabase = hasConfig 
