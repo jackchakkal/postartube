@@ -1,28 +1,42 @@
 import React, { useState } from 'react';
 import { ChannelProfile, Platform, PLATFORM_CONFIG } from '../types';
-import { Plus, Trash2, Smartphone, MonitorPlay, Youtube, Facebook, Instagram, LogOut } from 'lucide-react';
+import { Plus, Trash2, Smartphone, MonitorPlay, Youtube, Facebook, Instagram, LogOut, Loader2 } from 'lucide-react';
 import { supabase } from '../services/supabase';
 
 interface ChannelManagerProps {
   profiles: ChannelProfile[];
   activeProfileId: string;
   onSwitch: (id: string) => void;
-  onCreate: (name: string, platform: Platform) => void;
+  onCreate: (name: string, platform: Platform) => Promise<void> | void;
   onDelete: (id: string) => void;
   onClose: () => void;
   t: any;
 }
 
-export const ChannelManager: React.FC<ChannelManagerProps> = ({ 
-  profiles, activeProfileId, onSwitch, onCreate, onDelete, onClose, t 
+export const ChannelManager: React.FC<ChannelManagerProps> = ({
+  profiles, activeProfileId, onSwitch, onCreate, onDelete, onClose, t
 }) => {
   const [newChannelName, setNewChannelName] = useState('');
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>('YOUTUBE');
+  const [isCreating, setIsCreating] = useState(false);
 
-  const handleCreate = () => {
-    if (!newChannelName.trim()) return;
-    onCreate(newChannelName, selectedPlatform);
-    setNewChannelName('');
+  const handleCreate = async () => {
+    if (!newChannelName.trim()) {
+      console.log("handleCreate: Nome vazio, ignorando.");
+      return;
+    }
+
+    console.log("handleCreate: Iniciando criação de perfil...", { name: newChannelName, platform: selectedPlatform });
+    setIsCreating(true);
+
+    try {
+      await onCreate(newChannelName, selectedPlatform);
+      setNewChannelName('');
+    } catch (error) {
+      console.error("handleCreate: Erro ao criar perfil:", error);
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -82,12 +96,20 @@ export const ChannelManager: React.FC<ChannelManagerProps> = ({
                     ))}
                 </div>
 
-                <button 
+                <button
                   onClick={handleCreate}
-                  disabled={!newChannelName.trim()}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white p-2 rounded-lg transition-colors flex items-center justify-center gap-2"
+                  disabled={!newChannelName.trim() || isCreating}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white p-2 rounded-lg transition-colors flex items-center justify-center gap-2"
                 >
-                  <Plus size={16} /> {t.createNewChannel}
+                  {isCreating ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Salvando...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={16} /> {t.createNewChannel}
+                    </>
+                  )}
                 </button>
               </div>
 
