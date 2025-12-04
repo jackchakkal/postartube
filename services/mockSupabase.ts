@@ -38,7 +38,11 @@ class MockQueryBuilder {
   }
 
   select(columns = '*') {
-    this.op = 'select';
+    // BUGFIX: Se a operação já for de escrita (insert/update), não sobrescreva com 'select'.
+    // O Supabase permite .insert().select(), onde o select apenas instrui o retorno dos dados.
+    if (!this.op) {
+        this.op = 'select';
+    }
     return this;
   }
 
@@ -122,9 +126,12 @@ class MockQueryBuilder {
         // 1. Identificar quais índices correspondem aos filtros
         let targetIndices: number[] = [];
         
-        // Se não houver filtros, target são todos (CUIDADO, mas é o comportamento SQL)
-        if (this.filters.length === 0 && (this.op === 'update' || this.op === 'delete')) {
-            targetIndices = db.map((_: any, i: number) => i);
+        // Se não houver filtros, target são todos (CUIDADO para update/delete sem where)
+        // Mas no mock vamos assumir que se não tem filtro no update/delete, afeta tudo (ou nada se for bug)
+        // Para select sem filtro, retorna tudo.
+        
+        if (this.filters.length === 0) {
+             targetIndices = db.map((_: any, i: number) => i);
         } else {
             // Começa com todos
             let candidates = db.map((_: any, i: number) => i);
@@ -134,7 +141,7 @@ class MockQueryBuilder {
                 candidates = candidates.filter((i: number) => {
                     const itemVal = db[i][f.col];
                     // Comparação "solta" (==) para evitar problemas entre string/number no JSON
-                    // Ex: '5' == 5 é true.
+                    // e.g. "5" == 5
                     return itemVal == f.val;
                 });
             }
@@ -173,7 +180,7 @@ class MockQueryBuilder {
             // Mantém apenas os índices que NÃO estão no targetIndices
             const newDb = db.filter((_: any, i: number) => !targetIndices.includes(i));
             setLocal(this.table, newDb);
-            // Delete deve retornar null data geralmente, ou os deletados se select() for chamado (não impl aqui)
+            // Delete deve retornar null data geralmente
             result.data = null; 
         }
       }

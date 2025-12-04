@@ -31,7 +31,6 @@ const App: React.FC = () => {
   // --- SESSION STATE ---
   const [session, setSession] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
-  // Removido initError bloqueante para evitar travamento em produção
 
   // --- UI STATE ---
   const [lang, setLang] = useState<Language>('pt'); // Default inicial
@@ -59,7 +58,7 @@ const App: React.FC = () => {
                 setTimeout(() => {
                     console.warn("Auth timeout - showing login screen");
                     resolve(null);
-                }, 5000)
+                }, 15000)
             );
 
             // Race: O que vier primeiro (sessão real ou timeout) ganha
@@ -154,7 +153,7 @@ const App: React.FC = () => {
 
   const loadProfiles = async () => {
       const { data, error } = await supabase.from('p12_profiles').select('*');
-      if (error) console.error(error);
+      if (error) console.error("Error loading profiles:", error);
       if (data) {
           const mapped: ChannelProfile[] = data.map((p: DbProfile) => ({
               id: p.id,
@@ -250,19 +249,28 @@ const App: React.FC = () => {
   };
 
   const handleCreateProfile = async (name: string, platform: Platform) => {
-      const { data, error } = await supabase.from('p12_profiles').insert({
-          user_id: session.user.id,
-          name: name,
-          platform: platform,
-          default_videos_per_day: 3,
-          default_start_time: '09:00',
-          default_end_time: '18:00'
-      }).select().single();
+      try {
+          const { data, error } = await supabase.from('p12_profiles').insert({
+              user_id: session.user.id,
+              name: name,
+              platform: platform,
+              default_videos_per_day: 3,
+              default_start_time: '09:00',
+              default_end_time: '18:00'
+          }).select().single();
 
-      if (data) {
-          await loadProfiles();
-          setActiveProfileId(data.id);
-          setChannelManagerOpen(false);
+          if (error) {
+              throw error;
+          }
+
+          if (data) {
+              await loadProfiles();
+              setActiveProfileId(data.id);
+              setChannelManagerOpen(false);
+          }
+      } catch (err: any) {
+          console.error("Error creating profile:", err);
+          alert(`Erro ao criar perfil: ${err.message || 'Unknown error'}`);
       }
   };
 
@@ -438,8 +446,6 @@ const App: React.FC = () => {
           </div>
       );
   }
-
-  // Erro bloqueante removido, agora cai direto no Auth se não tiver sessão
 
   if (!session) return <Auth t={t} />;
 
