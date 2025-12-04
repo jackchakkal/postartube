@@ -58,11 +58,11 @@ const App: React.FC = () => {
           const { count, error, status } = await supabase
             .from('p12_profiles')
             .select('*', { count: 'exact', head: true });
-          
+
           const duration = (performance.now() - start).toFixed(2);
-          
+
           if (error) {
-              // Erro 401 é "Não autorizado", o que significa que o banco respondeu (Conexão OK), 
+              // Erro 401 é "Não autorizado", o que significa que o banco respondeu (Conexão OK),
               // mas o usuário não está logado (Auth OK). Isso é um SUCESSO de conexão.
               if (status === 401 || error.code === 'PGRST301') {
                   console.log(`%c✅ CONEXÃO ESTABELECIDA (${duration}ms)`, "color: green; font-weight: bold; font-size: 12px");
@@ -76,6 +76,33 @@ const App: React.FC = () => {
       } catch (e) {
           console.error("%c❌ FALHA CRÍTICA NA REDE", "color: red", e);
       }
+      console.groupEnd();
+  };
+
+  // Teste detalhado de operações CRUD (para debug)
+  const testCrudOperations = async () => {
+      if (!session?.user?.id) return;
+
+      console.group("🧪 TESTE DE OPERAÇÕES CRUD");
+
+      // Teste SELECT
+      console.log("Testando SELECT...");
+      const selectStart = performance.now();
+      const { data: selectData, error: selectError } = await supabase
+          .from('p12_profiles')
+          .select('id')
+          .limit(1);
+      console.log(`SELECT (${(performance.now() - selectStart).toFixed(0)}ms):`, selectError ? `❌ ${selectError.message}` : '✅ OK');
+
+      // Nota: Não executamos INSERT/DELETE de teste para não criar dados lixo
+      // O problema mais comum é RLS bloqueando INSERT
+      console.log("Para testar INSERT, tente criar um perfil pela interface.");
+      console.log("Se travar, verifique as políticas RLS no Supabase Dashboard:");
+      console.log("  1. Acesse: Authentication > Policies");
+      console.log("  2. Procure a tabela p12_profiles");
+      console.log("  3. Certifique-se que existe uma política INSERT para 'authenticated'");
+      console.log("  4. A política deve ser: (auth.uid() = user_id)");
+
       console.groupEnd();
   };
 
@@ -134,6 +161,8 @@ const App: React.FC = () => {
       setSession(session);
       if (session) {
           await loadUserConfig(session.user.id);
+          // Executa teste CRUD após login para debug
+          setTimeout(() => testCrudOperations(), 1000);
       } else {
           setProfiles([]);
           setActiveProfileId('');
@@ -307,7 +336,20 @@ const App: React.FC = () => {
       console.log("Creating profile...", { name, platform, userId: session.user.id });
 
       try {
-          const { data, error } = await supabase.from('p12_profiles').insert({
+          // Helper para criar timeout em Promise
+          const withTimeout = <T,>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> => {
+              return Promise.race([
+                  promise,
+                  new Promise<T>((_, reject) =>
+                      setTimeout(() => reject(new Error(errorMsg)), ms)
+                  )
+              ]);
+          };
+
+          console.log("Sending insert request to Supabase...");
+          const startTime = performance.now();
+
+          const insertPromise = supabase.from('p12_profiles').insert({
               user_id: session.user.id,
               name: name,
               platform: platform,
@@ -316,11 +358,26 @@ const App: React.FC = () => {
               default_end_time: '18:00'
           }).select().single();
 
-          console.log("Supabase response:", { data, error });
+          // Timeout de 15 segundos para a operação
+          const { data, error } = await withTimeout(
+              insertPromise,
+              15000,
+              'Timeout: A conexão com o banco de dados demorou muito. Verifique sua conexão e as políticas de segurança (RLS) no Supabase.'
+          );
+
+          const duration = (performance.now() - startTime).toFixed(0);
+          console.log(`Supabase response (${duration}ms):`, { data, error });
 
           if (error) {
               console.error("Supabase Create Profile Error:", error);
-              alert(`Erro ao salvar no banco de dados: ${error.message}`);
+              // Mensagens mais amigáveis para erros comuns
+              if (error.code === '42501' || error.message?.includes('policy')) {
+                  alert('Erro de permissão: Verifique as políticas RLS da tabela p12_profiles no Supabase.');
+              } else if (error.code === '23505') {
+                  alert('Erro: Já existe um perfil com este nome.');
+              } else {
+                  alert(`Erro ao salvar no banco de dados: ${error.message}`);
+              }
               return;
           }
 
@@ -337,7 +394,11 @@ const App: React.FC = () => {
           }
       } catch (err: any) {
           console.error("Exception creating profile:", err);
-          alert(`Erro inesperado: ${err.message || 'Consulte o console para mais detalhes'}`);
+          if (err.message?.includes('Timeout')) {
+              alert(err.message);
+          } else {
+              alert(`Erro inesperado: ${err.message || 'Consulte o console para mais detalhes'}`);
+          }
       }
   };
 
