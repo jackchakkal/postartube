@@ -1,25 +1,28 @@
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-import { createClient } from '@supabase/supabase-js';
+// Configuração do Supabase
+const SUPABASE_URL = 'https://yiaotyyjimxthhzfeelw.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlpYW90eXlqaW14dGhoemZlZWx3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDkxODM0NjksImV4cCI6MjA2NDc1OTQ2OX0.gohKsFBKL2vBcTNGt3RbD1v_3WyUbyg36zqUj1zd8q8';
 
-// Access environment variables securely
-const env = (import.meta as any).env || {};
+console.log('Initializing Supabase Client...');
+console.log('Supabase URL configured:', !!SUPABASE_URL);
+console.log('Supabase Key configured:', !!SUPABASE_ANON_KEY);
 
-// Use environment variables if available, otherwise use the provided credentials
-const supabaseUrl = env.VITE_SUPABASE_URL || 'https://yiaotyyjimxthhzfeelw.supabase.co';
-const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlpYW90eXlqaW14dGhoemZlZWx3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDkxODM0NjksImV4cCI6MjA2NDc1OTQ2OX0.gohKsFBKL2vBcTNGt3RbD1v_3WyUbyg36zqUj1zd8q8';
+// Criar cliente com configuração explícita
+export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true
+    },
+    global: {
+        headers: {
+            'X-Client-Info': 'postartube-web'
+        }
+    }
+});
 
-// Debug info
-console.log("Initializing Supabase Client...");
-console.log(`Supabase URL configured: ${!!supabaseUrl}`);
-console.log(`Supabase Key configured: ${!!supabaseAnonKey}`);
-
-if (!supabaseUrl || !supabaseAnonKey) {
-    console.error("CRITICAL: Supabase credentials missing.");
-}
-
-// Initialize the real client with the provided credentials
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-export const isSupabaseConfigured = () => {
-    return !!supabaseUrl && !!supabaseAnonKey;
-}
+// Verificar se está configurado
+export const isSupabaseConfigured = (): boolean => {
+    return !!SUPABASE_URL && !!SUPABASE_ANON_KEY;
+};
