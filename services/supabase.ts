@@ -10,6 +10,8 @@ const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5c
 
 // Debug info
 console.log("Initializing Supabase Client...");
+console.log(`Supabase URL configured: ${!!supabaseUrl}`);
+console.log(`Supabase Key configured: ${!!supabaseAnonKey}`);
 
 if (!supabaseUrl || !supabaseAnonKey) {
     console.error("CRITICAL: Supabase credentials missing.");

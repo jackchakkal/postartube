@@ -31,6 +31,7 @@ const App: React.FC = () => {
   // --- SESSION STATE ---
   const [session, setSession] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
+  const [loadingStatus, setLoadingStatus] = useState("Iniciando sistema...");
 
   // --- UI STATE ---
   const [lang, setLang] = useState<Language>('pt'); // Default inicial
@@ -49,34 +50,54 @@ const App: React.FC = () => {
   // 1. Auth Init & Config Load
   useEffect(() => {
     let mounted = true;
+    console.log("App: Component mounted, starting initialization sequence.");
+
+    // SAFETY TIMEOUT: Force stop loading after 7 seconds if Supabase hangs
+    const safetyTimeout = setTimeout(() => {
+        if (mounted && sessionLoading) {
+            console.error("App: Initialization TIMEOUT. Forcing login screen.");
+            setSessionLoading(false);
+        }
+    }, 7000);
 
     const init = async () => {
         try {
-            console.log("App: Initializing authentication...");
+            setLoadingStatus("Conectando ao banco de dados...");
+            console.log("App: Calling supabase.auth.getSession()...");
+            
             const { data, error } = await supabase.auth.getSession();
             
             if (error) { 
-                console.warn("Session check error:", error.message);
+                console.warn("App: Session check error:", error.message);
+                // We don't throw here, we just proceed as logged out
             }
             
             if (mounted) {
                 if (data?.session) {
                     setSession(data.session);
-                    console.log("App: Session found.");
+                    console.log("App: Session found for user:", data.session.user.id);
+                    setLoadingStatus("Carregando suas preferências...");
                     await loadUserConfig(data.session.user.id);
+                } else {
+                    console.log("App: No active session found.");
                 }
-                setSessionLoading(false);
             }
 
         } catch (e: any) {
-            console.error("Auth init exception:", e);
-            if (mounted) setSessionLoading(false);
+            console.error("App: Auth init exception:", e);
+        } finally {
+            if (mounted) {
+                console.log("App: Initialization complete.");
+                clearTimeout(safetyTimeout);
+                setSessionLoading(false);
+            }
         }
     };
 
     init();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event: any, session: any) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
+      console.log(`App: Auth State Change: ${event}`);
       if (!mounted) return;
       setSession(session);
       if (session) {
@@ -92,6 +113,7 @@ const App: React.FC = () => {
     return () => {
         mounted = false;
         subscription.unsubscribe();
+        clearTimeout(safetyTimeout);
     };
   }, []);
 
@@ -441,7 +463,8 @@ const App: React.FC = () => {
       return (
           <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-500 gap-4">
               <div className="animate-spin text-indigo-500"><RotateCcw size={32} /></div>
-              <p>Carregando sistema...</p>
+              <p className="font-medium text-slate-700 dark:text-slate-300">{loadingStatus}</p>
+              <p className="text-xs text-slate-400">Se demorar mais que 8 segundos, o login será solicitado.</p>
           </div>
       );
   }
