@@ -31,7 +31,7 @@ const App: React.FC = () => {
   // --- SESSION STATE ---
   const [session, setSession] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
-  const [loadingStatus, setLoadingStatus] = useState("Iniciando sistema...");
+  const [loadingStatus, setLoadingStatus] = useState("Iniciando...");
 
   // --- UI STATE ---
   const [lang, setLang] = useState<Language>('pt'); // Default inicial
@@ -47,47 +47,79 @@ const App: React.FC = () => {
   const [slots, setSlots] = useState<VideoSlot[]>([]);
   const [loadingData, setLoadingData] = useState(false);
 
+  // --- DB CONNECTION TEST ---
+  const testDbConnection = async () => {
+      console.group("🔌 DIAGNÓSTICO DE REDE / BANCO DE DADOS");
+      console.log("Iniciando teste de conexão com Supabase...");
+      const start = performance.now();
+      try {
+          // Tenta uma query leve que não requer auth (ou requer anon apenas)
+          // Usamos head: true para não baixar dados, apenas verificar acesso
+          const { count, error, status } = await supabase
+            .from('p12_profiles')
+            .select('*', { count: 'exact', head: true });
+          
+          const duration = (performance.now() - start).toFixed(2);
+          
+          if (error) {
+              // Erro 401 é "Não autorizado", o que significa que o banco respondeu (Conexão OK), 
+              // mas o usuário não está logado (Auth OK). Isso é um SUCESSO de conexão.
+              if (status === 401 || error.code === 'PGRST301') {
+                  console.log(`%c✅ CONEXÃO ESTABELECIDA (${duration}ms)`, "color: green; font-weight: bold; font-size: 12px");
+                  console.log("Status: Banco acessível, aguardando login do usuário.");
+              } else {
+                  console.error(`%c❌ ERRO DE CONEXÃO (${duration}ms)`, "color: red; font-weight: bold", error);
+              }
+          } else {
+              console.log(`%c✅ CONEXÃO PERFEITA (${duration}ms)`, "color: green; font-weight: bold; font-size: 12px");
+          }
+      } catch (e) {
+          console.error("%c❌ FALHA CRÍTICA NA REDE", "color: red", e);
+      }
+      console.groupEnd();
+  };
+
   // 1. Auth Init & Config Load
   useEffect(() => {
     let mounted = true;
-    console.log("App: Component mounted, starting initialization sequence.");
+    console.log("App: Montado. Iniciando verificações...");
 
-    // SAFETY TIMEOUT: Force stop loading after 7 seconds if Supabase hangs
+    // Executa o teste de conexão em paralelo
+    testDbConnection();
+
+    // SAFETY TIMEOUT: Force stop loading after 5 seconds if Supabase hangs
     const safetyTimeout = setTimeout(() => {
         if (mounted && sessionLoading) {
-            console.error("App: Initialization TIMEOUT. Forcing login screen.");
+            console.warn("App: Timeout de carregamento. Forçando exibição da tela de Login.");
             setSessionLoading(false);
         }
-    }, 7000);
+    }, 5000);
 
     const init = async () => {
         try {
-            setLoadingStatus("Conectando ao banco de dados...");
-            console.log("App: Calling supabase.auth.getSession()...");
-            
+            // Verificar sessão local primeiro (rápido)
             const { data, error } = await supabase.auth.getSession();
             
             if (error) { 
-                console.warn("App: Session check error:", error.message);
-                // We don't throw here, we just proceed as logged out
+                console.warn("App: Erro ao verificar sessão:", error.message);
             }
             
             if (mounted) {
                 if (data?.session) {
+                    console.log("App: Sessão encontrada para:", data.session.user.email);
                     setSession(data.session);
-                    console.log("App: Session found for user:", data.session.user.id);
-                    setLoadingStatus("Carregando suas preferências...");
-                    await loadUserConfig(data.session.user.id);
+                    setLoadingStatus("Carregando preferências...");
+                    // Carrega config em background para não travar a UI
+                    loadUserConfig(data.session.user.id).catch(console.error);
                 } else {
-                    console.log("App: No active session found.");
+                    console.log("App: Nenhuma sessão ativa. Exibindo Login.");
                 }
             }
 
         } catch (e: any) {
-            console.error("App: Auth init exception:", e);
+            console.error("App: Exceção na inicialização:", e);
         } finally {
             if (mounted) {
-                console.log("App: Initialization complete.");
                 clearTimeout(safetyTimeout);
                 setSessionLoading(false);
             }
@@ -97,13 +129,12 @@ const App: React.FC = () => {
     init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
-      console.log(`App: Auth State Change: ${event}`);
+      console.log(`App: Mudança de Auth: ${event}`);
       if (!mounted) return;
       setSession(session);
       if (session) {
           await loadUserConfig(session.user.id);
       } else {
-          // Reset state on logout
           setProfiles([]);
           setActiveProfileId('');
           setSlots([]);
@@ -138,7 +169,7 @@ const App: React.FC = () => {
               });
           }
       } catch (err) {
-          console.error("Error loading config", err);
+          // Silent fail for config
       }
   };
 
@@ -464,7 +495,15 @@ const App: React.FC = () => {
           <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-500 gap-4">
               <div className="animate-spin text-indigo-500"><RotateCcw size={32} /></div>
               <p className="font-medium text-slate-700 dark:text-slate-300">{loadingStatus}</p>
-              <p className="text-xs text-slate-400">Se demorar mais que 8 segundos, o login será solicitado.</p>
+              <div className="flex flex-col items-center text-xs text-slate-400 gap-1">
+                 <p>Verificando credenciais...</p>
+                 <button 
+                   onClick={() => setSessionLoading(false)} 
+                   className="text-indigo-500 hover:underline mt-2"
+                 >
+                   Demorando muito? Ir para Login
+                 </button>
+              </div>
           </div>
       );
   }
