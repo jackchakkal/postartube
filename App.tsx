@@ -53,9 +53,10 @@ const App: React.FC = () => {
 
     const init = async () => {
         try {
-            // Safety Timeout: Force stop loading after 5 seconds if DB hangs
+            console.log("App: Initializing authentication...");
+            // Safety Timeout: Increased to 15s for Supabase cold starts
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error("Connection timeout")), 5000)
+                setTimeout(() => reject(new Error("Connection timeout")), 15000)
             );
 
             // Race between actual connection and timeout
@@ -68,9 +69,10 @@ const App: React.FC = () => {
                         const session = data?.session;
                         setSession(session);
                         if (session) {
+                            console.log("App: Session found, loading config...");
                             await loadUserConfig(session.user.id);
                         } else {
-                             // Fallback to local storage if not logged in
+                             console.log("App: No session, falling back to local defaults");
                              const localLang = localStorage.getItem('postartube_lang') as Language;
                              if(localLang) setLang(localLang);
                              const localTheme = localStorage.getItem('postartube_theme');
@@ -272,7 +274,7 @@ const App: React.FC = () => {
   const generateSchedule = async () => {
     if (!activeProfileId) return;
     
-    // Clear immediately in UI to show action is happening and prevent appending duplicates if reload is slow
+    // Clear immediately in UI
     setSlots([]);
     setLoadingData(true);
 
@@ -300,12 +302,20 @@ const App: React.FC = () => {
     randomTimes.sort((a, b) => a - b);
 
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
+    console.log(`Generating schedule for ${dateStr} - Deleting old slots...`);
 
-    // 1. CLEAR EXISTING SLOTS FOR THIS PROFILE AND DATE (WAIT FOR IT)
-    await supabase.from('p12_slots')
+    // 1. CLEAR EXISTING SLOTS FOR THIS PROFILE AND DATE
+    const { error: delError } = await supabase.from('p12_slots')
         .delete()
         .eq('profile_id', activeProfileId)
         .eq('date', dateStr);
+
+    if (delError) {
+        console.error("Error clearing slots:", delError);
+        alert('Failed to clear old schedule. Please try again.');
+        setLoadingData(false);
+        return;
+    }
 
     // 2. INSERT NEW SLOTS
     const newDbSlots = randomTimes.map(timeMins => ({
@@ -319,11 +329,12 @@ const App: React.FC = () => {
         description: ''
     }));
 
-    const { error } = await supabase.from('p12_slots').insert(newDbSlots);
-    if (error) {
-        console.error(error);
+    const { error: insError } = await supabase.from('p12_slots').insert(newDbSlots);
+    if (insError) {
+        console.error("Error inserting slots:", insError);
         alert('Error saving schedule');
     } else {
+        console.log("Schedule generated successfully");
         await loadSlots();
     }
   };

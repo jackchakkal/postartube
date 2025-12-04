@@ -120,10 +120,16 @@ class MockQueryBuilder {
       // --- SELECT / UPDATE / DELETE ---
       else {
         // 1. Identificar quais índices correspondem aos filtros
+        // Usamos comparação "solta" (==) para evitar problemas entre number/string
+        // mas cuidamos com null/undefined
         let targetIndices = db.map((_: any, i: number) => i);
         
         for (const f of this.filters) {
-            targetIndices = targetIndices.filter((i: number) => db[i][f.col] === f.val);
+            targetIndices = targetIndices.filter((i: number) => {
+                const itemVal = db[i][f.col];
+                // Compare as string to be safe
+                return String(itemVal) === String(f.val);
+            });
         }
 
         if (this.op === 'select') {

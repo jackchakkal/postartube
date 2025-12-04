@@ -7,8 +7,18 @@ const env = (import.meta as any).env || {};
 const supabaseUrl = env.VITE_SUPABASE_URL;
 const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY;
 
-// Check not just for existence but also for length to avoid empty strings
-const hasConfig = supabaseUrl && supabaseUrl.length > 5 && supabaseAnonKey && supabaseAnonKey.length > 5;
+// Strict check: must be a string and longer than a minimal placeholder
+const hasConfig = 
+    typeof supabaseUrl === 'string' && 
+    supabaseUrl.length > 10 && 
+    typeof supabaseAnonKey === 'string' && 
+    supabaseAnonKey.length > 10;
+
+console.log("Supabase Client Init:", hasConfig ? "REAL MODE" : "MOCK MODE");
+if (!hasConfig) {
+    console.warn("Supabase config missing or invalid. Falling back to offline mock.");
+    console.debug("URL:", supabaseUrl, "KEY:", supabaseAnonKey ? "******" : "Missing");
+}
 
 // Se tiver config real, usa o cliente real. Se não, usa o Mock (Offline Mode)
 export const supabase = hasConfig 
@@ -16,7 +26,5 @@ export const supabase = hasConfig
     : (mockSupabase as any);
 
 export const isSupabaseConfigured = () => {
-    // Retornamos true sempre agora, pois temos o Mock como fallback
-    // Isso permite que a UI funcione imediatamente no Preview
     return true; 
 }
