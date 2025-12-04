@@ -120,16 +120,25 @@ class MockQueryBuilder {
       // --- SELECT / UPDATE / DELETE ---
       else {
         // 1. Identificar quais índices correspondem aos filtros
-        // Usamos comparação "solta" (==) para evitar problemas entre number/string
-        // mas cuidamos com null/undefined
-        let targetIndices = db.map((_: any, i: number) => i);
+        let targetIndices: number[] = [];
         
-        for (const f of this.filters) {
-            targetIndices = targetIndices.filter((i: number) => {
-                const itemVal = db[i][f.col];
-                // Compare as string to be safe
-                return String(itemVal) === String(f.val);
-            });
+        // Se não houver filtros, target são todos (CUIDADO, mas é o comportamento SQL)
+        if (this.filters.length === 0 && (this.op === 'update' || this.op === 'delete')) {
+            targetIndices = db.map((_: any, i: number) => i);
+        } else {
+            // Começa com todos
+            let candidates = db.map((_: any, i: number) => i);
+            
+            // Aplica cada filtro progressivamente
+            for (const f of this.filters) {
+                candidates = candidates.filter((i: number) => {
+                    const itemVal = db[i][f.col];
+                    // Comparação "solta" (==) para evitar problemas entre string/number no JSON
+                    // Ex: '5' == 5 é true.
+                    return itemVal == f.val;
+                });
+            }
+            targetIndices = candidates;
         }
 
         if (this.op === 'select') {
@@ -164,7 +173,8 @@ class MockQueryBuilder {
             // Mantém apenas os índices que NÃO estão no targetIndices
             const newDb = db.filter((_: any, i: number) => !targetIndices.includes(i));
             setLocal(this.table, newDb);
-            result.data = null;
+            // Delete deve retornar null data geralmente, ou os deletados se select() for chamado (não impl aqui)
+            result.data = null; 
         }
       }
     } catch (e: any) {

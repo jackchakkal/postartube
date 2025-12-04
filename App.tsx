@@ -31,7 +31,7 @@ const App: React.FC = () => {
   // --- SESSION STATE ---
   const [session, setSession] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
-  const [initError, setInitError] = useState<string | null>(null);
+  // Removido initError bloqueante para evitar travamento em produção
 
   // --- UI STATE ---
   const [lang, setLang] = useState<Language>('pt'); // Default inicial
@@ -54,38 +54,43 @@ const App: React.FC = () => {
     const init = async () => {
         try {
             console.log("App: Initializing authentication...");
-            // Safety Timeout: Increased to 15s for Supabase cold starts
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error("Connection timeout")), 15000)
+            // Timeout de segurança: Se demorar mais que 5s, libera a tela de login
+            const timeoutPromise = new Promise((resolve) => 
+                setTimeout(() => {
+                    console.warn("Auth timeout - showing login screen");
+                    resolve(null);
+                }, 5000)
             );
 
-            // Race between actual connection and timeout
+            // Race: O que vier primeiro (sessão real ou timeout) ganha
             await Promise.race([
                 (async () => {
                     const { data, error } = await supabase.auth.getSession();
-                    if (error) throw error;
+                    if (error) { 
+                        console.warn("Session check error:", error.message);
+                        return; // Deixa o timeout ou o fluxo seguir sem sessão
+                    }
                     
-                    if (mounted) {
-                        const session = data?.session;
+                    if (mounted && data?.session) {
+                        const session = data.session;
                         setSession(session);
-                        if (session) {
-                            console.log("App: Session found, loading config...");
-                            await loadUserConfig(session.user.id);
-                        } else {
-                             console.log("App: No session, falling back to local defaults");
-                             const localLang = localStorage.getItem('postartube_lang') as Language;
-                             if(localLang) setLang(localLang);
-                             const localTheme = localStorage.getItem('postartube_theme');
-                             if(localTheme) setDarkMode(localTheme === 'dark');
-                        }
+                        console.log("App: Session found, loading config...");
+                        await loadUserConfig(session.user.id);
                     }
                 })(),
                 timeoutPromise
             ]);
 
+            // Fallback para defaults locais se não houver sessão
+            if (mounted && !session) {
+                 const localLang = localStorage.getItem('postartube_lang') as Language;
+                 if(localLang) setLang(localLang);
+                 const localTheme = localStorage.getItem('postartube_theme');
+                 if(localTheme) setDarkMode(localTheme === 'dark');
+            }
+
         } catch (e: any) {
-            console.error("Auth init error", e);
-            if (mounted) setInitError(e.message || "Failed to initialize application");
+            console.error("Auth init exception (non-fatal):", e);
         } finally {
             if (mounted) setSessionLoading(false);
         }
@@ -305,6 +310,7 @@ const App: React.FC = () => {
     console.log(`Generating schedule for ${dateStr} - Deleting old slots...`);
 
     // 1. CLEAR EXISTING SLOTS FOR THIS PROFILE AND DATE
+    // Importante: Await para garantir que o Mock/Supabase termine de apagar antes de inserir
     const { error: delError } = await supabase.from('p12_slots')
         .delete()
         .eq('profile_id', activeProfileId)
@@ -335,7 +341,7 @@ const App: React.FC = () => {
         alert('Error saving schedule');
     } else {
         console.log("Schedule generated successfully");
-        await loadSlots();
+        await loadSlots(); // Recarrega para garantir consistência
     }
   };
 
@@ -433,27 +439,7 @@ const App: React.FC = () => {
       );
   }
 
-  if (initError) {
-      return (
-          <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 p-6">
-              <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full border border-red-200 dark:border-red-900/50 text-center">
-                  <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600 dark:text-red-400">
-                      <AlertTriangle size={32} />
-                  </div>
-                  <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">Startup Error</h2>
-                  <p className="text-slate-500 dark:text-slate-400 mb-6 text-sm">
-                      {initError}
-                  </p>
-                  <button 
-                    onClick={() => window.location.reload()}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2"
-                  >
-                      <RefreshCw size={18} /> Retry
-                  </button>
-              </div>
-          </div>
-      );
-  }
+  // Erro bloqueante removido, agora cai direto no Auth se não tiver sessão
 
   if (!session) return <Auth t={t} />;
 
